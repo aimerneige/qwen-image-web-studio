@@ -107,9 +107,10 @@ class ModelManager:
         task_id: str,
         prompt: str,
         negative_prompt: Optional[str],
+        image_data: Optional[str],
         steps: int,
-        width: int,
-        height: int,
+        width: Optional[int],
+        height: Optional[int],
         seed: Optional[int],
         loop: asyncio.AbstractEventLoop,
     ) -> Dict[str, Any]:
@@ -133,13 +134,38 @@ class ModelManager:
             )
             self._load_pipeline_sync()
 
+        # 2. 处理参考图片（图生图 / 图像引导）
+        input_pil: Optional[Image.Image] = None
+        input_image_url: Optional[str] = None
+        if image_data and image_data.strip():
+            try:
+                import io
+                import base64
+                raw_b64 = image_data.strip()
+                if "," in raw_b64:
+                    raw_b64 = raw_b64.split(",", 1)[1]
+                image_bytes = base64.b64decode(raw_b64)
+                input_pil = Image.open(io.BytesIO(image_bytes))
+                if hasattr(input_pil, "mode") and input_pil.mode not in ("RGB", "RGBA"):
+                    input_pil = input_pil.convert("RGB")
+                
+                # 保存参考图备份以便前端展示对比
+                ref_filename = f"ref_{int(time.time())}_{task_id[:8]}.png"
+                ref_filepath = OUTPUTS_DIR / ref_filename
+                input_pil.save(ref_filepath)
+                input_image_url = f"/outputs/{ref_filename}"
+                logger.info(f"已载入参考图片: {ref_filename}, 尺寸={input_pil.size}")
+            except Exception as e:
+                logger.warning(f"解析输入参考图片失败: {e}，将回退到纯文生图模式")
+                input_pil = None
+
         loop.call_soon_threadsafe(
             self._broadcast,
             "progress",
             {
                 "task_id": task_id,
                 "status": "encoding_prompt",
-                "message": "正在编码提示词与文本特征 (Text Encoder)...",
+                "message": "正在编码提示词与" + ("图文混合多模态特征 (Qwen3-VL)..." if input_pil else "文本特征 (Text Encoder)..."),
                 "step": 0,
                 "total_steps": steps,
                 "percent": 8,
@@ -147,7 +173,7 @@ class ModelManager:
             }
         )
 
-        # 2. 随机种子设置
+        # 3. 随机种子设置
         generator = None
         if seed is not None and seed >= 0:
             generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -155,7 +181,7 @@ class ModelManager:
             seed = int(torch.randint(0, 2**32 - 1, (1,)).item())
             generator = torch.Generator(device="cpu").manual_seed(seed)
 
-        # 3. 步进进度回调
+        # 4. 步进进度回调
         def step_callback(pipe, step_index: int, timestep: Any, callback_kwargs: Dict[str, Any]):
             current_step = step_index + 1
             percent = 10 + int((current_step / steps) * 82)
@@ -178,7 +204,7 @@ class ModelManager:
             loop.call_soon_threadsafe(self._broadcast, "progress", status_payload)
             return callback_kwargs
 
-        logger.info(f"开始生成任务 {task_id}: prompt='{prompt}', steps={steps}, size={width}x{height}, seed={seed}")
+        logger.info(f"开始生成任务 {task_id}: prompt='{prompt}', has_image={input_pil is not None}, steps={steps}, size={width}x{height}, seed={seed}")
 
         call_kwargs: Dict[str, Any] = {
             "prompt": prompt,
@@ -187,7 +213,10 @@ class ModelManager:
             "callback_on_step_end": step_callback,
         }
 
-        if width and height:
+        if input_pil is not None:
+            call_kwargs["image"] = input_pil
+
+        if width and height and width > 0 and height > 0:
             call_kwargs["width"] = width
             call_kwargs["height"] = height
 
@@ -229,10 +258,12 @@ class ModelManager:
             "url": f"/outputs/{filename}",
             "prompt": prompt,
             "negative_prompt": negative_prompt or "",
+            "has_input_image": input_pil is not None,
+            "input_image_url": input_image_url,
             "seed": seed,
             "steps": steps,
-            "width": width,
-            "height": height,
+            "width": image.width,
+            "height": image.height,
             "elapsed": elapsed,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -242,9 +273,10 @@ class ModelManager:
         self,
         prompt: str,
         negative_prompt: Optional[str] = None,
+        image_data: Optional[str] = None,
         steps: int = 28,
-        width: int = 1024,
-        height: int = 1024,
+        width: Optional[int] = 1024,
+        height: Optional[int] = 1024,
         seed: Optional[int] = None,
     ) -> Dict[str, Any]:
         """异步任务分发入口：严格利用 async 互斥锁保障单任务独占"""
@@ -257,6 +289,7 @@ class ModelManager:
             self.current_task = {
                 "id": task_id,
                 "prompt": prompt,
+                "has_image": bool(image_data),
                 "status": "queued",
                 "message": "任务已接收，等待调度执行...",
                 "step": 0,
@@ -275,6 +308,7 @@ class ModelManager:
                     task_id=task_id,
                     prompt=prompt,
                     negative_prompt=negative_prompt,
+                    image_data=image_data,
                     steps=steps,
                     width=width,
                     height=height,

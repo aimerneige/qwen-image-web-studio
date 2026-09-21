@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Sparkles,
   Lock,
@@ -17,6 +17,9 @@ import {
   Cpu,
   Layers,
   RefreshCw,
+  UploadCloud,
+  Trash2,
+  Eye,
   X
 } from 'lucide-react'
 import './App.css'
@@ -38,6 +41,8 @@ interface ImageResult {
   url: string
   prompt: string
   negative_prompt?: string
+  has_input_image?: boolean
+  input_image_url?: string
   seed?: number
   steps?: number
   width?: number
@@ -46,7 +51,7 @@ interface ImageResult {
   created_at?: string
 }
 
-const PRESETS = [
+const TEXT_PRESETS = [
   {
     name: '🧸 Q版手办 (Chibi)',
     prompt: '1girl, Kousaka Honoka, school uniform, chibi, transparent background, highly detailed',
@@ -69,7 +74,26 @@ const PRESETS = [
   },
 ]
 
-const RESOLUTIONS = [
+const IMAGE_PRESETS = [
+  {
+    name: '🧸 转Q版手办风',
+    prompt: 'transform this character into a cute 3D chibi figure toy, glossy plastic clay texture, smooth lighting, white background, highly detailed',
+  },
+  {
+    name: '🌌 转赛博朋克风',
+    prompt: 'reimagine this scene with futuristic cyberpunk aesthetic, neon cyan and magenta illumination, wet pavement reflections, 8k',
+  },
+  {
+    name: '🌸 转新海诚二次元',
+    prompt: 're-render this scene in Makoto Shinkai anime movie style, gorgeous sunset gradient sky, vibrant anime colors, hand-drawn detailing',
+  },
+  {
+    name: '✨ 高清细节增强',
+    prompt: 'enhance the resolution and fine details of this image, crisp texture, masterpiece quality, 8k photographic rendering',
+  },
+]
+
+const STANDARD_RESOLUTIONS = [
   { label: '1:1 方形 (1024×1024)', width: 1024, height: 1024 },
   { label: '16:9 横屏 (1280×720)', width: 1280, height: 720 },
   { label: '9:16 竖屏 (720×1280)', width: 720, height: 1280 },
@@ -77,14 +101,20 @@ const RESOLUTIONS = [
   { label: '3:4 人像 (768×1024)', width: 768, height: 1024 },
 ]
 
+const AUTO_RESOLUTION = { label: '🖼️ 自适应参考图比例 (Auto)', width: 0, height: 0 }
+
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const [prompt, setPrompt] = useState('1girl, Kousaka Honoka, school uniform, chibi, transparent background, highly detailed')
   const [negativePrompt, setNegativePrompt] = useState('')
+  const [inputImage, setInputImage] = useState<string | null>(null)
+  const [inputImageName, setInputImageName] = useState<string>('')
+  const [isDragging, setIsDragging] = useState(false)
   const [steps, setSteps] = useState(28)
-  const [resolution, setResolution] = useState(RESOLUTIONS[0])
+  const [resolution, setResolution] = useState(STANDARD_RESOLUTIONS[0])
   const [seed, setSeed] = useState<number | ''>('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showRefCompare, setShowRefCompare] = useState(false)
 
   const [isBusy, setIsBusy] = useState(false)
   const [progress, setProgress] = useState<TaskProgress | null>(null)
@@ -93,6 +123,8 @@ export default function App() {
   const [activeModalImage, setActiveModalImage] = useState<ImageResult | null>(null)
   const [copied, setCopied] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 主题切换
   const toggleTheme = () => {
@@ -106,6 +138,51 @@ export default function App() {
     navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  // 处理图片文件加载
+  const processImageFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('请上传标准的图片文件 (PNG, JPG, WEBP 等)')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string
+      setInputImage(dataUrl)
+      setInputImageName(file.name)
+      // 默认切换到自适应分辨率
+      setResolution(AUTO_RESOLUTION)
+      // 若当前正处于纯文本默认提示词，自动建议一个图生图提示词
+      if (prompt.includes('Kousaka Honoka')) {
+        setPrompt(IMAGE_PRESETS[0].prompt)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  // 移除参考图
+  const removeInputImage = () => {
+    setInputImage(null)
+    setInputImageName('')
+    if (resolution.width === 0 && resolution.height === 0) {
+      setResolution(STANDARD_RESOLUTIONS[0])
+    }
+  }
+
+  // 剪贴板全局粘贴图片监听 (Ctrl + V)
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile()
+        if (file) {
+          processImageFile(file)
+          break
+        }
+      }
+    }
   }
 
   // 获取初始状态
@@ -202,7 +279,6 @@ export default function App() {
 
       eventSource.onerror = () => {
         eventSource?.close()
-        // 3秒后尝试重连
         setTimeout(connectSSE, 3000)
       }
     }
@@ -235,6 +311,7 @@ export default function App() {
         body: JSON.stringify({
           prompt: prompt.trim(),
           negative_prompt: negativePrompt.trim(),
+          image: inputImage,
           steps,
           width: resolution.width,
           height: resolution.height,
@@ -255,8 +332,12 @@ export default function App() {
     }
   }
 
+  const availableResolutions = inputImage
+    ? [AUTO_RESOLUTION, ...STANDARD_RESOLUTIONS]
+    : STANDARD_RESOLUTIONS
+
   return (
-    <div className="app-container">
+    <div className="app-container" onPaste={handlePaste}>
       {/* Top App Bar */}
       <header className="top-app-bar">
         <div className="top-bar-brand">
@@ -300,27 +381,119 @@ export default function App() {
             <div className="card-header">
               <h2 className="card-title">
                 <Sliders size={20} color="var(--md-sys-color-primary)" />
-                图像生成配置
+                图像生成与引导配置
               </h2>
               <span style={{ fontSize: '12px', color: 'var(--md-sys-color-outline)' }}>
-                Diffusion Pipeline
+                {inputImage ? '多模态图生图 (Qwen3-VL)' : '文生图 (Text-to-Image)'}
               </span>
+            </div>
+
+            {/* Input Image Upload Area (图生图 / 参考图上传) */}
+            <div className="field-group">
+              <div className="field-label">
+                <span>参考图片输入 (图生图 / 图像引导)</span>
+                <span style={{ fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
+                  支持拖入、选择或 Ctrl+V 粘贴
+                </span>
+              </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    processImageFile(e.target.files[0])
+                  }
+                }}
+              />
+
+              {!inputImage ? (
+                <div
+                  className={`upload-dropzone ${isDragging ? 'dragging' : ''}`}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setIsDragging(true)
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setIsDragging(false)
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      processImageFile(e.dataTransfer.files[0])
+                    }
+                  }}
+                >
+                  <div className="upload-dropzone-icon">
+                    <UploadCloud size={22} />
+                  </div>
+                  <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                    点击选择图片，或将图片拖拽至此处
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--md-sys-color-outline)' }}>
+                    上传后将结合提示词实现以图生图、重绘、风格转换
+                  </div>
+                </div>
+              ) : (
+                <div className="upload-preview-card">
+                  <img src={inputImage} alt="参考图预览" className="upload-preview-thumb" />
+                  <div className="upload-preview-details">
+                    <span className="upload-preview-name" title={inputImageName}>
+                      {inputImageName || '已上传参考图'}
+                    </span>
+                    <span className="upload-preview-tag">
+                      <Layers size={12} /> 图生图模式已激活
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="更换图片"
+                    >
+                      <UploadCloud size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={removeInputImage}
+                      title="移除图片 (切换回纯文生图)"
+                    >
+                      <Trash2 size={16} color="var(--md-sys-color-error)" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Prompt Input */}
             <div className="field-group">
-              <label className="field-label">正向提示词 (Prompt)</label>
+              <label className="field-label">
+                <span>正向提示词 (Prompt)</span>
+                {inputImage && (
+                  <span className="reference-badge">
+                    配合参考图引导
+                  </span>
+                )}
+              </label>
               <div className="field-container">
                 <textarea
                   className="md3-textarea"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="请输入用于引导图像生成的英文或中文提示词..."
+                  placeholder={
+                    inputImage
+                      ? '描述想要在参考图基础上进行的变换（如：改为二次元水彩风、添加墨镜与赛博朋克服饰...）'
+                      : '请输入引导图像生成的正向提示词...'
+                  }
                   rows={4}
                   disabled={isBusy}
                 />
                 <div className="field-footer">
-                  <span>支持细致角色、场景、画风与材质描述</span>
+                  <span>支持中英文细致角色、场景、画风与材质描述</span>
                   <span>{prompt.length} 字</span>
                 </div>
               </div>
@@ -328,9 +501,11 @@ export default function App() {
 
             {/* Suggestion Chips */}
             <div className="field-group">
-              <label className="field-label">快捷灵感预设</label>
+              <label className="field-label">
+                <span>{inputImage ? '💡 图生图变换灵感' : '💡 文生图快捷灵感'}</span>
+              </label>
               <div className="chips-scroll">
-                {PRESETS.map((p, idx) => (
+                {(inputImage ? IMAGE_PRESETS : TEXT_PRESETS).map((p, idx) => (
                   <button
                     key={idx}
                     type="button"
@@ -393,7 +568,7 @@ export default function App() {
                   <div className="field-group">
                     <label className="field-label">分辨率比例 (Aspect Ratio)</label>
                     <div className="chips-scroll">
-                      {RESOLUTIONS.map((res, i) => (
+                      {availableResolutions.map((res, i) => (
                         <button
                           key={i}
                           type="button"
@@ -497,7 +672,7 @@ export default function App() {
               ) : (
                 <>
                   <Sparkles size={18} />
-                  <span>开始生成图像</span>
+                  <span>{inputImage ? '基于参考图开始生成' : '开始文生图'}</span>
                 </>
               )}
             </button>
@@ -518,6 +693,15 @@ export default function App() {
               </span>
               {currentResult && (
                 <div style={{ display: 'flex', gap: '8px' }}>
+                  {currentResult.input_image_url && (
+                    <button
+                      className="icon-button"
+                      onClick={() => setShowRefCompare(!showRefCompare)}
+                      title={showRefCompare ? '隐藏参考图对比' : '查看原参考图对比'}
+                    >
+                      <Eye size={18} />
+                    </button>
+                  )}
                   <button
                     className="icon-button"
                     onClick={() => copyPrompt(currentResult.prompt)}
@@ -557,13 +741,45 @@ export default function App() {
                 </div>
               ) : currentResult ? (
                 <div className="image-wrapper">
-                  <img
-                    src={currentResult.url}
-                    alt={currentResult.prompt}
-                    className="display-image"
-                    onClick={() => setActiveModalImage(currentResult)}
-                  />
+                  {showRefCompare && currentResult.input_image_url ? (
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', marginBottom: '6px', color: 'var(--md-sys-color-outline)' }}>
+                          输入参考原图
+                        </div>
+                        <img
+                          src={currentResult.input_image_url}
+                          alt="输入参考图"
+                          style={{ maxHeight: 380, maxWidth: '100%', borderRadius: 12, objectFit: 'contain' }}
+                        />
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '12px', marginBottom: '6px', color: 'var(--md-sys-color-primary)' }}>
+                          最终生成结果
+                        </div>
+                        <img
+                          src={currentResult.url}
+                          alt={currentResult.prompt}
+                          className="display-image"
+                          style={{ maxHeight: 380 }}
+                          onClick={() => setActiveModalImage(currentResult)}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={currentResult.url}
+                      alt={currentResult.prompt}
+                      className="display-image"
+                      onClick={() => setActiveModalImage(currentResult)}
+                    />
+                  )}
                   <div className="image-meta-bar">
+                    {currentResult.has_input_image && (
+                      <span className="reference-badge">
+                        🖼️ 图生图引导
+                      </span>
+                    )}
                     <span className="meta-chip">
                       尺寸: {currentResult.width || 1024} × {currentResult.height || 1024}
                     </span>
@@ -579,7 +795,7 @@ export default function App() {
               ) : (
                 <div className="empty-placeholder">
                   <ImageIcon size={64} strokeWidth={1.2} />
-                  <p>输入提示词并点击“开始生成图像”，结果将在此处呈现</p>
+                  <p>输入提示词（或上传参考图）并点击“开始生成”，结果将在此处呈现</p>
                 </div>
               )}
             </div>
@@ -603,7 +819,17 @@ export default function App() {
                     setPrompt(item.prompt)
                   }}
                 >
-                  <img src={item.url} alt={item.prompt} className="history-thumb" loading="lazy" />
+                  <div style={{ position: 'relative' }}>
+                    <img src={item.url} alt={item.prompt} className="history-thumb" loading="lazy" />
+                    {item.has_input_image && (
+                      <span
+                        className="reference-badge"
+                        style={{ position: 'absolute', top: 8, right: 8, boxShadow: 'var(--md-sys-elevation-1)' }}
+                      >
+                        图生图
+                      </span>
+                    )}
+                  </div>
                   <div className="history-info">
                     <span className="history-prompt" title={item.prompt}>
                       {item.prompt}
@@ -636,6 +862,7 @@ export default function App() {
                 <p style={{ fontWeight: 500 }}>{activeModalImage.prompt}</p>
                 <p style={{ fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
                   {activeModalImage.created_at} | 步数: {activeModalImage.steps || 28} | 种子: {activeModalImage.seed}
+                  {activeModalImage.has_input_image && ' | 图生图生成'}
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>

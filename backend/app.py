@@ -31,9 +31,10 @@ app.add_middleware(
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., description="正向提示词", min_length=1)
     negative_prompt: Optional[str] = Field(default="", description="负向提示词")
+    image: Optional[str] = Field(default=None, description="Base64 编码的输入图像（支持图生图/参考图引导）")
     steps: int = Field(default=28, ge=1, le=100, description="推理步数")
-    width: int = Field(default=1024, ge=256, le=2048, description="图像宽度")
-    height: int = Field(default=1024, ge=256, le=2048, description="图像高度")
+    width: Optional[int] = Field(default=1024, ge=0, le=2048, description="图像宽度（0表示根据参考图自适应）")
+    height: Optional[int] = Field(default=1024, ge=0, le=2048, description="图像高度（0表示根据参考图自适应）")
     seed: Optional[int] = Field(default=None, description="随机种子，留空或负数表示随机")
 
 @app.get("/api/status")
@@ -55,6 +56,7 @@ async def trigger_generate(req: GenerateRequest):
         model_manager.generate_task(
             prompt=req.prompt,
             negative_prompt=req.negative_prompt,
+            image_data=req.image,
             steps=req.steps,
             width=req.width,
             height=req.height,
