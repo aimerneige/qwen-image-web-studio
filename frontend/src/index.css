@@ -1,0 +1,146 @@
+:root {
+  /* Material Design 3 Light Scheme Tokens */
+  --md-sys-color-primary: #6750a4;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #eaddff;
+  --md-sys-color-on-primary-container: #21005d;
+  
+  --md-sys-color-secondary: #625b71;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #e8def8;
+  --md-sys-color-on-secondary-container: #1d192b;
+
+  --md-sys-color-tertiary: #7d5260;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #ffd8e4;
+  --md-sys-color-on-tertiary-container: #31111d;
+
+  --md-sys-color-surface: #fef7ff;
+  --md-sys-color-surface-dim: #ded8e1;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #f7f2fa;
+  --md-sys-color-surface-container: #f3edf7;
+  --md-sys-color-surface-container-high: #ece6f0;
+  --md-sys-color-surface-container-highest: #e6e0e9;
+  --md-sys-color-on-surface: #1d1b20;
+  --md-sys-color-on-surface-variant: #49454f;
+
+  --md-sys-color-outline: #79747e;
+  --md-sys-color-outline-variant: #cac4d0;
+
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-error-container: #ffdad6;
+  --md-sys-color-on-error-container: #410002;
+
+  --md-sys-color-success: #1e8e3e;
+  --md-sys-color-success-container: #c8eed0;
+  --md-sys-color-on-success-container: #003915;
+
+  --md-sys-color-warning: #9e6c00;
+  --md-sys-color-warning-container: #ffdf9e;
+  --md-sys-color-on-warning-container: #261900;
+
+  /* Elevations */
+  --md-sys-elevation-1: 0 1px 3px 1px rgba(0, 0, 0, 0.08), 0 1px 2px 0 rgba(0, 0, 0, 0.12);
+  --md-sys-elevation-2: 0 2px 6px 2px rgba(0, 0, 0, 0.08), 0 1px 2px 0 rgba(0, 0, 0, 0.12);
+  --md-sys-elevation-3: 0 4px 8px 3px rgba(0, 0, 0, 0.1), 0 1px 3px 0 rgba(0, 0, 0, 0.15);
+  --md-sys-elevation-4: 0 6px 12px 4px rgba(0, 0, 0, 0.1), 0 2px 4px 0 rgba(0, 0, 0, 0.15);
+
+  /* MD3 Shapes */
+  --md-sys-shape-xs: 4px;
+  --md-sys-shape-s: 8px;
+  --md-sys-shape-m: 12px;
+  --md-sys-shape-l: 16px;
+  --md-sys-shape-xl: 28px;
+  --md-sys-shape-full: 9999px;
+
+  /* Typography */
+  --font-family: 'Roboto', 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, 'SF Mono', monospace;
+}
+
+[data-theme='dark'] {
+  --md-sys-color-primary: #d0bcff;
+  --md-sys-color-on-primary: #381e72;
+  --md-sys-color-primary-container: #4f378b;
+  --md-sys-color-on-primary-container: #eaddff;
+  
+  --md-sys-color-secondary: #ccc2dc;
+  --md-sys-color-on-secondary: #332d41;
+  --md-sys-color-secondary-container: #4a4458;
+  --md-sys-color-on-secondary-container: #e8def8;
+
+  --md-sys-color-tertiary: #efb8c8;
+  --md-sys-color-on-tertiary: #492532;
+  --md-sys-color-tertiary-container: #633b48;
+  --md-sys-color-on-tertiary-container: #ffd8e4;
+
+  --md-sys-color-surface: #141218;
+  --md-sys-color-surface-dim: #141218;
+  --md-sys-color-surface-container-lowest: #0f0d13;
+  --md-sys-color-surface-container-low: #1d1b20;
+  --md-sys-color-surface-container: #211f26;
+  --md-sys-color-surface-container-high: #2b2930;
+  --md-sys-color-surface-container-highest: #36343b;
+  --md-sys-color-on-surface: #e6e0e9;
+  --md-sys-color-on-surface-variant: #cac4d0;
+
+  --md-sys-color-outline: #938f99;
+  --md-sys-color-outline-variant: #49454f;
+
+  --md-sys-color-error: #f2b8b5;
+  --md-sys-color-error-container: #8c1d18;
+  --md-sys-color-on-error-container: #f9dedc;
+
+  --md-sys-color-success: #81c995;
+  --md-sys-color-success-container: #0f5223;
+  --md-sys-color-on-success-container: #c8eed0;
+
+  --md-sys-color-warning: #fdd663;
+  --md-sys-color-warning-container: #664600;
+  --md-sys-color-on-warning-container: #ffdf9e;
+
+  --md-sys-elevation-1: 0 1px 3px 1px rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.6);
+  --md-sys-elevation-2: 0 2px 6px 2px rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.6);
+  --md-sys-elevation-3: 0 4px 8px 3px rgba(0, 0, 0, 0.5), 0 1px 3px 0 rgba(0, 0, 0, 0.7);
+  --md-sys-elevation-4: 0 6px 12px 4px rgba(0, 0, 0, 0.6), 0 2px 4px 0 rgba(0, 0, 0, 0.8);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--md-sys-color-surface-container-low);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--md-sys-color-outline);
+}
