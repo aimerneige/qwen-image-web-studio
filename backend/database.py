@@ -8,10 +8,16 @@ logger = logging.getLogger("qwen_image_db")
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "history.db"
 
-def get_db_connection() -> sqlite3.Connection:
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 def init_db():
     """初始化 SQLite 数据库表结构"""
@@ -199,10 +205,14 @@ def delete_generation(gen_id: str) -> bool:
             if ref_url.startswith("/outputs/ref_"):
                 ref_filename = ref_url.replace("/outputs/", "")
                 ref_file = BASE_DIR / "outputs" / ref_filename
-                try:
-                    if ref_file.exists():
-                        ref_file.unlink()
-                except Exception as e:
-                    logger.warning(f"删除参考图 {ref_filename} 失败: {e}")
+                # 只有当其他历史记录均不再引用该参考图时才安全删除物理文件
+                cursor.execute("SELECT COUNT(*) FROM generations WHERE input_image_url LIKE ?", (f"%{ref_filename}%",))
+                remaining_count = cursor.fetchone()[0]
+                if remaining_count == 0:
+                    try:
+                        if ref_file.exists():
+                            ref_file.unlink()
+                    except Exception as e:
+                        logger.warning(f"删除参考图 {ref_filename} 失败: {e}")
 
         return True

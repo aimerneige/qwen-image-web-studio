@@ -209,16 +209,46 @@ export default function App() {
     setTimeout(() => setModalCopied(false), 2000)
   }
 
-  // Remix 混编：将历史记录的完整提示词覆盖到工作区，若任务执行中则拒绝
+  // Remix 混编：将历史记录的完整提示词与原始参考图片覆盖到工作区，若任务执行中则拒绝
   const handleRemix = (item: ImageResult) => {
     if (isBusy) {
-      setErrorMessage('工作区正在执行生成任务，无法覆盖提示词')
+      setErrorMessage('工作区正在执行生成任务，无法覆盖提示词与参考图')
       return
     }
+
+    // 1. 恢复正向提示词
     setPrompt(item.prompt)
-    if (item.negative_prompt !== undefined && item.negative_prompt !== '') {
+
+    // 2. 恢复反向提示词（如果有）
+    if (item.negative_prompt !== undefined) {
       setNegativePrompt(item.negative_prompt)
     }
+
+    // 3. 恢复原始参考输入图片
+    if (item.has_input_image) {
+      const urls: string[] = (item.input_image_urls && item.input_image_urls.length > 0)
+        ? item.input_image_urls
+        : (item.input_image_url ? [item.input_image_url] : [])
+
+      if (urls.length > 0) {
+        const restoredImages: UploadedImage[] = urls.map((url, idx) => {
+          const fname = url.split('/').pop() || `ref_${idx + 1}.png`
+          return {
+            id: `remix-${item.id}-${idx}-${Date.now()}`,
+            url: url,
+            name: `参考图 ${idx + 1} (${fname})`,
+          }
+        })
+        setInputImages(restoredImages)
+        setResolution(AUTO_RESOLUTION)
+      } else {
+        setInputImages([])
+      }
+    } else {
+      setInputImages([])
+    }
+
+    // 4. 关闭弹窗并滚动至顶部
     setActiveModalImage(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -1248,6 +1278,38 @@ export default function App() {
                   </div>
                 )}
 
+                {activeModalImage.has_input_image && ((activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 0) || activeModalImage.input_image_url) && (
+                  <div>
+                    <div className="modal-section-title">
+                      <span>
+                        原始参考输入图 ({((activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 0)
+                          ? activeModalImage.input_image_urls
+                          : [activeModalImage.input_image_url!]).length} 张)
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {((activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 0)
+                        ? activeModalImage.input_image_urls
+                        : [activeModalImage.input_image_url!]
+                      ).map((refUrl, idx) => (
+                        <a key={idx} href={refUrl} target="_blank" rel="noreferrer" title={`点击新标签打开参考图 ${idx + 1}`}>
+                          <img
+                            src={refUrl}
+                            alt={`参考图 ${idx + 1}`}
+                            style={{
+                              width: 58,
+                              height: 58,
+                              objectFit: 'cover',
+                              borderRadius: 'var(--md-sys-shape-s)',
+                              border: '1.5px solid var(--md-sys-color-outline-variant)',
+                            }}
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <div className="modal-section-title">
                     <span>完整提示词 (Prompt)</span>
@@ -1341,11 +1403,13 @@ export default function App() {
                   type="button"
                   className="btn-remix"
                   onClick={() => handleRemix(activeModalImage)}
-                  title={isBusy ? '工作区正在执行生成任务，无法覆盖提示词' : '将完整提示词覆盖到工作区'}
+                  title={isBusy ? '工作区正在执行生成任务，无法覆盖提示词与参考图' : '将完整提示词与原始参考图载入工作区'}
                   style={isBusy ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
                 >
                   <Sparkles size={16} />
-                  <span>Remix 提示词</span>
+                  <span>
+                    {activeModalImage.has_input_image ? 'Remix 到工作区 (含参考图)' : 'Remix 到工作区'}
+                  </span>
                 </button>
               </div>
             </div>

@@ -62,5 +62,61 @@ class TestDatabase(unittest.TestCase):
         deleted = delete_generation("test_gen_multi_001")
         self.assertTrue(deleted)
 
+    def test_load_image_item_and_ref_protection(self):
+        import base64
+        import io
+        from PIL import Image
+        from backend.model_service import load_image_item, OUTPUTS_DIR
+
+        # 1. 构造一个微型 Base64 PNG 图片
+        img = Image.new("RGB", (32, 32), color=(255, 0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        # 2. 测试通过 Base64 加载并保存
+        pil_img, ref_url = load_image_item(f"data:image/png;base64,{b64_str}", "test_loader", 1)
+        self.assertIsNotNone(pil_img)
+        self.assertIsNotNone(ref_url)
+        self.assertTrue(ref_url.startswith("/outputs/ref_"))
+
+        # 3. 测试通过已有 /outputs/ 路径直接加载
+        reloaded_img, reloaded_url = load_image_item(ref_url, "test_loader_reuse", 1)
+        self.assertIsNotNone(reloaded_img)
+        self.assertEqual(reloaded_url, ref_url)
+
+        # 4. 测试两条记录共享同一参考图时，删除一条不会破坏另一条的参考图物理文件
+        gen1 = {
+            "id": "test_share_001",
+            "filename": "test_share_001.png",
+            "url": "/outputs/test_share_001.png",
+            "prompt": "shared ref 1",
+            "has_input_image": True,
+            "input_image_urls": [ref_url],
+            "created_at": "2099-09-22 14:00:00",
+        }
+        gen2 = {
+            "id": "test_share_002",
+            "filename": "test_share_002.png",
+            "url": "/outputs/test_share_002.png",
+            "prompt": "shared ref 2",
+            "has_input_image": True,
+            "input_image_urls": [ref_url],
+            "created_at": "2099-09-22 14:01:00",
+        }
+        insert_generation(gen1)
+        insert_generation(gen2)
+
+        ref_file = OUTPUTS_DIR / ref_url.replace("/outputs/", "")
+        self.assertTrue(ref_file.exists())
+
+        # 删除 gen1，由于 gen2 依然引用该参考图，文件应保留
+        delete_generation("test_share_001")
+        self.assertTrue(ref_file.exists())
+
+        # 删除 gen2，不再有任何记录引用该参考图，文件应被安全清理
+        delete_generation("test_share_002")
+        self.assertFalse(ref_file.exists())
+
 if __name__ == "__main__":
     unittest.main()

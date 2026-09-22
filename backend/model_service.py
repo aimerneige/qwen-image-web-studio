@@ -17,6 +17,53 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUTS_DIR = BASE_DIR / "outputs"
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
+def load_image_item(raw_item: str, prefix_id: str, index: int) -> tuple[Optional[Image.Image], Optional[str]]:
+    """解析参考输入图片：支持本地 outputs 存储路径（如 /outputs/ref_...）与 Base64 编码"""
+    import io
+    import base64
+    if not raw_item or not raw_item.strip():
+        return None, None
+
+    raw_str = raw_item.strip()
+    pil_img: Optional[Image.Image] = None
+    ref_url: Optional[str] = None
+
+    # 1. 检查是否为已存放在 outputs 目录中的文件路径
+    if raw_str.startswith("/outputs/") or raw_str.startswith("outputs/"):
+        clean_name = raw_str.lstrip("/").replace("outputs/", "", 1)
+        target_file = OUTPUTS_DIR / clean_name
+        if target_file.exists():
+            try:
+                pil_img = Image.open(target_file)
+                ref_url = f"/outputs/{clean_name}"
+            except Exception as e:
+                logger.warning(f"打开已有参考图文件 {target_file} 失败: {e}")
+
+    # 2. 若非已有文件，则按 Base64 编码进行解析
+    if pil_img is None:
+        try:
+            raw_b64 = raw_str
+            if "," in raw_b64:
+                raw_b64 = raw_b64.split(",", 1)[1]
+            image_bytes = base64.b64decode(raw_b64)
+            pil_img = Image.open(io.BytesIO(image_bytes))
+        except Exception as e:
+            logger.warning(f"Base64 解码参考图失败: {e}")
+            return None, None
+
+    if pil_img is not None:
+        if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
+            pil_img = pil_img.convert("RGB")
+
+        # 若是新上传的 Base64 图片，持久化到 outputs 目录；若已有文件路径则直接复用
+        if ref_url is None:
+            ref_filename = f"ref_{int(time.time())}_{prefix_id[:8]}_{index}.png"
+            ref_filepath = OUTPUTS_DIR / ref_filename
+            pil_img.save(ref_filepath)
+            ref_url = f"/outputs/{ref_filename}"
+
+    return pil_img, ref_url
+
 class ModelManager:
     def __init__(self):
         self.pipeline: Optional[DiffusionPipeline] = None
@@ -149,28 +196,12 @@ class ModelManager:
             input_pils: List[Image.Image] = []
             input_image_urls: List[str] = []
             if images_data:
-                import io
-                import base64
                 for idx, raw_item in enumerate(images_data):
-                    if not raw_item or not raw_item.strip():
-                        continue
-                    try:
-                        raw_b64 = raw_item.strip()
-                        if "," in raw_b64:
-                            raw_b64 = raw_b64.split(",", 1)[1]
-                        image_bytes = base64.b64decode(raw_b64)
-                        pil_img = Image.open(io.BytesIO(image_bytes))
-                        if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
-                            pil_img = pil_img.convert("RGB")
-
-                        ref_filename = f"ref_{int(time.time())}_{task_id[:8]}_{idx + 1}.png"
-                        ref_filepath = OUTPUTS_DIR / ref_filename
-                        pil_img.save(ref_filepath)
+                    pil_img, ref_url = load_image_item(raw_item, task_id, idx + 1)
+                    if pil_img is not None and ref_url is not None:
                         input_pils.append(pil_img)
-                        input_image_urls.append(f"/outputs/{ref_filename}")
-                        logger.info(f"已载入参考图[{idx + 1}]: {ref_filename}, 尺寸={pil_img.size}")
-                    except Exception as e:
-                        logger.warning(f"解析第 {idx + 1} 张参考图片失败: {e}")
+                        input_image_urls.append(ref_url)
+                        logger.info(f"已载入参考图[{idx + 1}]: {ref_url}, 尺寸={pil_img.size}")
 
         num_imgs = len(input_pils)
         loop.call_soon_threadsafe(
@@ -355,28 +386,12 @@ class ModelManager:
             preloaded_pils = []
             preloaded_urls = []
             if all_images:
-                import io
-                import base64
                 for idx, raw_item in enumerate(all_images):
-                    if not raw_item or not raw_item.strip():
-                        continue
-                    try:
-                        raw_b64 = raw_item.strip()
-                        if "," in raw_b64:
-                            raw_b64 = raw_b64.split(",", 1)[1]
-                        image_bytes = base64.b64decode(raw_b64)
-                        pil_img = Image.open(io.BytesIO(image_bytes))
-                        if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
-                            pil_img = pil_img.convert("RGB")
-
-                        ref_filename = f"ref_{int(time.time())}_{batch_id[:8]}_{idx + 1}.png"
-                        ref_filepath = OUTPUTS_DIR / ref_filename
-                        pil_img.save(ref_filepath)
+                    pil_img, ref_url = load_image_item(raw_item, batch_id, idx + 1)
+                    if pil_img is not None and ref_url is not None:
                         preloaded_pils.append(pil_img)
-                        preloaded_urls.append(f"/outputs/{ref_filename}")
-                        logger.info(f"批次预加载参考图[{idx + 1}]: {ref_filename}")
-                    except Exception as e:
-                        logger.warning(f"预解析第 {idx + 1} 张参考图片失败: {e}")
+                        preloaded_urls.append(ref_url)
+                        logger.info(f"批次预加载参考图[{idx + 1}]: {ref_url}")
 
             loop = asyncio.get_running_loop()
             completed_results = []
