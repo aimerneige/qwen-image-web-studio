@@ -22,6 +22,7 @@ class ModelManager:
         self._lock = asyncio.Lock()  # 严格硬件互斥锁，确保单任务运行
         self._thread_lock = asyncio.Lock()
         self.is_busy: bool = False
+        self._cancel_requested: bool = False
         self.current_task: Optional[Dict[str, Any]] = None
         self.history: List[Dict[str, Any]] = []
         self._subscribers: List[asyncio.Queue] = []
@@ -77,6 +78,26 @@ class ModelManager:
             "current_task": self.current_task,
             "history": self.history[:50],
         }
+
+    def cancel_task(self) -> tuple[bool, str]:
+        """请求取消当前正在执行的任务并释放资源"""
+        if not self.is_busy:
+            return False, "当前无正在运行的生成任务"
+
+        self._cancel_requested = True
+        if self.pipeline is not None:
+            self.pipeline._interrupt = True
+
+        logger.info("已发起任务取消请求，正在中断去噪流程...")
+        self._broadcast("progress", {
+            "task_id": self.current_task.get("id") if self.current_task else "",
+            "status": "cancelling",
+            "message": "正在中断去噪并清理显存资源...",
+            "step": self.current_task.get("step", 0) if self.current_task else 0,
+            "total_steps": self.current_task.get("total_steps", 28) if self.current_task else 28,
+            "percent": self.current_task.get("percent", 0) if self.current_task else 0,
+        })
+        return True, "已发送任务取消信号"
 
     def _load_pipeline_sync(self):
         """同步加载模型管线并配置极致层级卸载"""
@@ -183,6 +204,11 @@ class ModelManager:
 
         # 4. 步进进度回调
         def step_callback(pipe, step_index: int, timestep: Any, callback_kwargs: Dict[str, Any]):
+            if self._cancel_requested:
+                if self.pipeline is not None:
+                    self.pipeline._interrupt = True
+                raise RuntimeError("TaskCancelled: 任务已由用户手动取消")
+
             current_step = step_index + 1
             percent = 10 + int((current_step / steps) * 82)
             elapsed = round(time.time() - start_time, 1)
@@ -205,6 +231,9 @@ class ModelManager:
             return callback_kwargs
 
         logger.info(f"开始生成任务 {task_id}: prompt='{prompt}', has_image={input_pil is not None}, steps={steps}, size={width}x{height}, seed={seed}")
+
+        if self._cancel_requested:
+            raise RuntimeError("TaskCancelled: 任务已由用户手动取消")
 
         call_kwargs: Dict[str, Any] = {
             "prompt": prompt,
@@ -229,6 +258,9 @@ class ModelManager:
 
         # 执行去噪采样
         pipeline_output = self.pipeline(**call_kwargs)
+
+        if self._cancel_requested:
+            raise RuntimeError("TaskCancelled: 任务已由用户手动取消")
 
         loop.call_soon_threadsafe(
             self._broadcast,
@@ -285,6 +317,7 @@ class ModelManager:
 
         async with self._lock:
             self.is_busy = True
+            self._cancel_requested = False
             task_id = str(uuid.uuid4())
             self.current_task = {
                 "id": task_id,
@@ -319,6 +352,14 @@ class ModelManager:
                 self._broadcast("complete", result)
                 return result
             except Exception as e:
+                if "TaskCancelled" in str(e):
+                    logger.info(f"任务 {task_id} 已成功中断取消")
+                    self._broadcast("cancelled", {
+                        "task_id": task_id,
+                        "status": "cancelled",
+                        "message": "生成任务已由用户手动取消",
+                    })
+                    return {"id": task_id, "status": "cancelled", "message": "任务已取消"}
                 logger.exception(f"任务 {task_id} 执行出错: {e}")
                 err_data = {
                     "task_id": task_id,
@@ -328,8 +369,13 @@ class ModelManager:
                 self._broadcast("error", err_data)
                 raise
             finally:
+                self._cancel_requested = False
                 self.is_busy = False
                 self.current_task = None
+                if self.pipeline is not None:
+                    self.pipeline._interrupt = False
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
 
 # 全局单例

@@ -69,6 +69,17 @@ async def trigger_generate(req: GenerateRequest):
         "message": "生成任务已启动",
     }
 
+@app.post("/api/cancel")
+async def cancel_task():
+    """取消当前正在运行的图像生成任务并释放 GPU 硬件锁"""
+    success, message = model_manager.cancel_task()
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    return {
+        "success": True,
+        "message": message,
+    }
+
 @app.get("/api/stream")
 async def event_stream(request: Request):
     """Server-Sent Events (SSE) 实时推送生成进度与状态"""

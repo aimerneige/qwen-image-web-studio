@@ -20,6 +20,7 @@ import {
   UploadCloud,
   Trash2,
   Eye,
+  Square,
   X
 } from 'lucide-react'
 import './App.css'
@@ -117,6 +118,7 @@ export default function App() {
   const [showRefCompare, setShowRefCompare] = useState(false)
 
   const [isBusy, setIsBusy] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [progress, setProgress] = useState<TaskProgress | null>(null)
   const [currentResult, setCurrentResult] = useState<ImageResult | null>(null)
   const [history, setHistory] = useState<ImageResult[]>([])
@@ -125,6 +127,23 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 取消正在运行的任务
+  const handleCancel = async () => {
+    if (!isBusy || isCancelling) return
+    setIsCancelling(true)
+    try {
+      const res = await fetch('/api/cancel', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json()
+        setErrorMessage(err.detail || '取消失败')
+      }
+    } catch (e: any) {
+      setErrorMessage(e.message || '网络连接错误')
+    } finally {
+      setIsCancelling(false)
+    }
+  }
 
   // 主题切换
   const toggleTheme = () => {
@@ -259,12 +278,21 @@ export default function App() {
         try {
           const data: ImageResult = JSON.parse(e.data)
           setIsBusy(false)
+          setIsCancelling(false)
           setProgress(null)
           setCurrentResult(data)
           setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
         } catch (err) {
           console.error(err)
         }
+      })
+
+      eventSource.addEventListener('cancelled', () => {
+        setIsBusy(false)
+        setIsCancelling(false)
+        setProgress(null)
+        setErrorMessage('任务已成功取消并释放 GPU 硬件锁')
+        setTimeout(() => setErrorMessage(null), 4000)
       })
 
       eventSource.addEventListener('error', (e: any) => {
@@ -275,6 +303,7 @@ export default function App() {
           } catch {}
         }
         setIsBusy(false)
+        setIsCancelling(false)
       })
 
       eventSource.onerror = () => {
@@ -641,7 +670,19 @@ export default function App() {
                     <Cpu size={16} />
                     {progress.message || '生成计算中...'}
                   </span>
-                  <span>{progress.percent}%</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>{progress.percent}%</span>
+                    <button
+                      type="button"
+                      className="btn-cancel-chip"
+                      onClick={handleCancel}
+                      disabled={isCancelling}
+                      title="取消当前生成任务"
+                    >
+                      <Square size={11} fill="currentColor" />
+                      <span>{isCancelling ? '取消中...' : '取消'}</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="progress-track">
                   <div
@@ -657,25 +698,40 @@ export default function App() {
               </div>
             )}
 
-            {/* Submit Button */}
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleGenerate}
-              disabled={isBusy || !prompt.trim()}
-            >
-              {isBusy ? (
-                <>
+            {/* Submit & Cancel Buttons */}
+            {isBusy ? (
+              <div className="button-action-row">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={true}
+                  style={{ flex: 1 }}
+                >
                   <div className="spinner" />
                   <span>任务执行中 (硬件独占保护)</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles size={18} />
-                  <span>{inputImage ? '基于参考图开始生成' : '开始文生图'}</span>
-                </>
-              )}
-            </button>
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger"
+                  onClick={handleCancel}
+                  disabled={isCancelling}
+                  title="中断当前推理并释放 GPU 硬件锁"
+                >
+                  <Square size={16} fill="currentColor" />
+                  <span>{isCancelling ? '正在中断...' : '取消任务'}</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleGenerate}
+                disabled={!prompt.trim()}
+              >
+                <Sparkles size={18} />
+                <span>{inputImage ? '基于参考图开始生成' : '开始文生图'}</span>
+              </button>
+            )}
 
             {/* Safety Tip */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--md-sys-color-outline)' }}>
