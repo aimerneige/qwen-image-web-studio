@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -31,7 +31,8 @@ app.add_middleware(
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., description="正向提示词", min_length=1)
     negative_prompt: Optional[str] = Field(default="", description="负向提示词")
-    image: Optional[str] = Field(default=None, description="Base64 编码的输入图像（支持图生图/参考图引导）")
+    image: Optional[str] = Field(default=None, description="Base64 编码的输入图像（支持图生图/参考图引导，兼容单图）")
+    images: Optional[List[str]] = Field(default=None, description="Base64 编码的多张输入参考图像列表")
     steps: int = Field(default=28, ge=1, le=100, description="推理步数")
     width: Optional[int] = Field(default=1024, ge=0, le=2048, description="图像宽度（0表示根据参考图自适应）")
     height: Optional[int] = Field(default=1024, ge=0, le=2048, description="图像高度（0表示根据参考图自适应）")
@@ -56,6 +57,7 @@ async def trigger_generate(req: GenerateRequest):
         model_manager.generate_task(
             prompt=req.prompt,
             negative_prompt=req.negative_prompt,
+            images_data=req.images,
             image_data=req.image,
             steps=req.steps,
             width=req.width,

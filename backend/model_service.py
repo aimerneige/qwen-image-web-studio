@@ -107,7 +107,7 @@ class ModelManager:
         task_id: str,
         prompt: str,
         negative_prompt: Optional[str],
-        image_data: Optional[str],
+        images_data: Optional[List[str]],
         steps: int,
         width: Optional[int],
         height: Optional[int],
@@ -134,38 +134,43 @@ class ModelManager:
             )
             self._load_pipeline_sync()
 
-        # 2. 处理参考图片（图生图 / 图像引导）
-        input_pil: Optional[Image.Image] = None
-        input_image_url: Optional[str] = None
-        if image_data and image_data.strip():
-            try:
-                import io
-                import base64
-                raw_b64 = image_data.strip()
-                if "," in raw_b64:
-                    raw_b64 = raw_b64.split(",", 1)[1]
-                image_bytes = base64.b64decode(raw_b64)
-                input_pil = Image.open(io.BytesIO(image_bytes))
-                if hasattr(input_pil, "mode") and input_pil.mode not in ("RGB", "RGBA"):
-                    input_pil = input_pil.convert("RGB")
-                
-                # 保存参考图备份以便前端展示对比
-                ref_filename = f"ref_{int(time.time())}_{task_id[:8]}.png"
-                ref_filepath = OUTPUTS_DIR / ref_filename
-                input_pil.save(ref_filepath)
-                input_image_url = f"/outputs/{ref_filename}"
-                logger.info(f"已载入参考图片: {ref_filename}, 尺寸={input_pil.size}")
-            except Exception as e:
-                logger.warning(f"解析输入参考图片失败: {e}，将回退到纯文生图模式")
-                input_pil = None
+        # 2. 处理参考图片（图生图 / 多图引导）
+        input_pils: List[Image.Image] = []
+        input_image_urls: List[str] = []
+        if images_data:
+            import io
+            import base64
+            for idx, raw_item in enumerate(images_data):
+                if not raw_item or not raw_item.strip():
+                    continue
+                try:
+                    raw_b64 = raw_item.strip()
+                    if "," in raw_b64:
+                        raw_b64 = raw_b64.split(",", 1)[1]
+                    image_bytes = base64.b64decode(raw_b64)
+                    pil_img = Image.open(io.BytesIO(image_bytes))
+                    if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
+                        pil_img = pil_img.convert("RGB")
+                    
+                    ref_filename = f"ref_{int(time.time())}_{task_id[:8]}_{idx + 1}.png"
+                    ref_filepath = OUTPUTS_DIR / ref_filename
+                    pil_img.save(ref_filepath)
+                    input_pils.append(pil_img)
+                    input_image_urls.append(f"/outputs/{ref_filename}")
+                    logger.info(f"已载入参考图[{idx + 1}]: {ref_filename}, 尺寸={pil_img.size}")
+                except Exception as e:
+                    logger.warning(f"解析第 {idx + 1} 张参考图片失败: {e}")
 
+        num_imgs = len(input_pils)
         loop.call_soon_threadsafe(
             self._broadcast,
             "progress",
             {
                 "task_id": task_id,
                 "status": "encoding_prompt",
-                "message": "正在编码提示词与" + ("图文混合多模态特征 (Qwen3-VL)..." if input_pil else "文本特征 (Text Encoder)..."),
+                "message": f"正在编码提示词与多图特征 ({num_imgs}张参考图)..." if num_imgs > 1 else (
+                    "正在编码提示词与参考图多模态特征..." if num_imgs == 1 else "正在编码文本提示词特征..."
+                ),
                 "step": 0,
                 "total_steps": steps,
                 "percent": 8,
@@ -209,7 +214,7 @@ class ModelManager:
             loop.call_soon_threadsafe(self._broadcast, "progress", status_payload)
             return callback_kwargs
 
-        logger.info(f"开始生成任务 {task_id}: prompt='{prompt}', has_image={input_pil is not None}, steps={steps}, size={width}x{height}, seed={seed}")
+        logger.info(f"开始生成任务 {task_id}: prompt='{prompt}', images_count={num_imgs}, steps={steps}, size={width}x{height}, seed={seed}")
 
         if self._cancel_requested:
             raise RuntimeError("TaskCancelled: 任务已由用户手动取消")
@@ -221,8 +226,8 @@ class ModelManager:
             "callback_on_step_end": step_callback,
         }
 
-        if input_pil is not None:
-            call_kwargs["image"] = input_pil
+        if input_pils:
+            call_kwargs["image"] = input_pils
 
         if width and height and width > 0 and height > 0:
             call_kwargs["width"] = width
@@ -269,8 +274,9 @@ class ModelManager:
             "url": f"/outputs/{filename}",
             "prompt": prompt,
             "negative_prompt": negative_prompt or "",
-            "has_input_image": input_pil is not None,
-            "input_image_url": input_image_url,
+            "has_input_image": num_imgs > 0,
+            "input_image_url": input_image_urls[0] if input_image_urls else "",
+            "input_image_urls": input_image_urls,
             "seed": seed,
             "steps": steps,
             "width": image.width,
@@ -284,6 +290,7 @@ class ModelManager:
         self,
         prompt: str,
         negative_prompt: Optional[str] = None,
+        images_data: Optional[List[str]] = None,
         image_data: Optional[str] = None,
         steps: int = 28,
         width: Optional[int] = 1024,
@@ -294,6 +301,11 @@ class ModelManager:
         if self._lock.locked():
             raise RuntimeError("当前已有任务正在执行中。由于模型占用极高硬件资源，系统已加锁限制单任务独占。")
 
+        # 整合多图与单图参数
+        all_images = list(images_data) if images_data else []
+        if image_data and image_data not in all_images:
+            all_images.insert(0, image_data)
+
         async with self._lock:
             self.is_busy = True
             self._cancel_requested = False
@@ -301,7 +313,8 @@ class ModelManager:
             self.current_task = {
                 "id": task_id,
                 "prompt": prompt,
-                "has_image": bool(image_data),
+                "has_image": len(all_images) > 0,
+                "images_count": len(all_images),
                 "status": "queued",
                 "message": "任务已接收，等待调度执行...",
                 "step": 0,
@@ -320,7 +333,7 @@ class ModelManager:
                     task_id=task_id,
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    image_data=image_data,
+                    images_data=all_images,
                     steps=steps,
                     width=width,
                     height=height,

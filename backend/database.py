@@ -80,7 +80,14 @@ def init_db():
                 logger.info("已初始化并植入包含有效提示词的示例生成记录")
 
 def insert_generation(data: Dict[str, Any]):
-    """将一条完整的图像生成记录存入 SQLite"""
+    """将一条完整的图像生成记录存入 SQLite（支持单图或多图参考）"""
+    import json
+    input_img_urls = data.get("input_image_urls")
+    if input_img_urls and isinstance(input_img_urls, list):
+        stored_img_url = json.dumps(input_img_urls)
+    else:
+        stored_img_url = data.get("input_image_url", "") or ""
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -96,7 +103,7 @@ def insert_generation(data: Dict[str, Any]):
             data.get("prompt"),
             data.get("negative_prompt", ""),
             1 if data.get("has_input_image") else 0,
-            data.get("input_image_url", "") or "",
+            stored_img_url,
             data.get("seed", -1),
             data.get("steps", 28),
             data.get("width", 1024),
@@ -109,6 +116,7 @@ def insert_generation(data: Dict[str, Any]):
 
 def get_history(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     """从数据库中按生成时间倒序获取历史记录（纯净数据，只返回包含有效 prompt 的记录）"""
+    import json
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -124,6 +132,16 @@ def get_history(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         rows = cursor.fetchall()
         result = []
         for r in rows:
+            raw_input_url = r["input_image_url"] or ""
+            parsed_urls = []
+            if raw_input_url.startswith("["):
+                try:
+                    parsed_urls = json.loads(raw_input_url)
+                except Exception:
+                    parsed_urls = [raw_input_url] if raw_input_url else []
+            elif raw_input_url:
+                parsed_urls = [raw_input_url]
+
             result.append({
                 "id": r["id"],
                 "filename": r["filename"],
@@ -131,7 +149,8 @@ def get_history(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
                 "prompt": r["prompt"],
                 "negative_prompt": r["negative_prompt"],
                 "has_input_image": bool(r["has_input_image"]),
-                "input_image_url": r["input_image_url"],
+                "input_image_url": parsed_urls[0] if parsed_urls else "",
+                "input_image_urls": parsed_urls,
                 "seed": r["seed"],
                 "steps": r["steps"],
                 "width": r["width"],
