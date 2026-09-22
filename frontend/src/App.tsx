@@ -246,6 +246,57 @@ export default function App() {
     }
   }
 
+  // 删除单条生成历史记录
+  const handleDeleteHistory = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    if (!window.confirm('确定要删除该条生成历史记录吗？对应图片文件也将被清理。')) {
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/history/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setHistory((prev) => {
+          const updated = prev.filter((item) => item.id !== id)
+          if (currentResult?.id === id) {
+            setCurrentResult(updated.length > 0 ? updated[0] : null)
+          }
+          return updated
+        })
+        if (activeModalImage?.id === id) {
+          setActiveModalImage(null)
+        }
+      } else {
+        const err = await res.json()
+        setErrorMessage(err.detail || '删除记录失败')
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || '网络连接错误')
+    }
+  }
+
+  // 清空全部生成历史记录
+  const handleClearAllHistory = async () => {
+    if (history.length === 0) return
+    if (!window.confirm(`确定要清空全部 ${history.length} 条生成历史记录吗？相关图片将被永久删除。`)) {
+      return
+    }
+
+    try {
+      const res = await fetch('/api/history', { method: 'DELETE' })
+      if (res.ok) {
+        setHistory([])
+        setCurrentResult(null)
+        setActiveModalImage(null)
+      } else {
+        const err = await res.json()
+        setErrorMessage(err.detail || '清空历史失败')
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || '网络连接错误')
+    }
+  }
+
   // 剪贴板全局粘贴图片监听 (Ctrl + V)
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -901,6 +952,13 @@ export default function App() {
                   </a>
                   <button
                     className="icon-button"
+                    onClick={() => handleDeleteHistory(currentResult.id)}
+                    title="删除此条生成记录"
+                  >
+                    <Trash2 size={18} color="var(--md-sys-color-error)" />
+                  </button>
+                  <button
+                    className="icon-button"
                     onClick={() => setActiveModalImage(currentResult)}
                     title="全屏查看"
                   >
@@ -996,10 +1054,21 @@ export default function App() {
         {/* History Gallery */}
         {history.length > 0 && (
           <section className="history-section">
-            <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Clock size={18} color="var(--md-sys-color-primary)" />
-              历史生成记录 ({history.length})
-            </h3>
+            <div className="history-header-row">
+              <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                <Clock size={18} color="var(--md-sys-color-primary)" />
+                历史生成记录 ({history.length})
+              </h3>
+              <button
+                type="button"
+                className="btn-clear-history"
+                onClick={handleClearAllHistory}
+                title="清空全部生成记录"
+              >
+                <Trash2 size={13} />
+                <span>清空历史</span>
+              </button>
+            </div>
             <div className="history-grid">
               {history.map((item) => (
                 <div
@@ -1010,6 +1079,14 @@ export default function App() {
                     setPrompt(item.prompt)
                   }}
                 >
+                  <button
+                    type="button"
+                    className="history-card-delete"
+                    onClick={(e) => handleDeleteHistory(item.id, e)}
+                    title="删除该记录"
+                  >
+                    <Trash2 size={13} />
+                  </button>
                   <div style={{ position: 'relative' }}>
                     <img src={item.url} alt={item.prompt} className="history-thumb" loading="lazy" />
                     {item.has_input_image && (
@@ -1049,7 +1126,7 @@ export default function App() {
               className="modal-image"
             />
             <div className="modal-footer">
-              <div style={{ maxWidth: '70%', fontSize: '13px', color: 'var(--md-sys-color-on-surface)' }}>
+              <div style={{ maxWidth: '65%', fontSize: '13px', color: 'var(--md-sys-color-on-surface)' }}>
                 <p style={{ fontWeight: 500 }}>{activeModalImage.prompt}</p>
                 <p style={{ fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
                   时间: {activeModalImage.created_at} | 耗时: {activeModalImage.elapsed}s | 步数: {activeModalImage.steps || 28} | 尺寸: {activeModalImage.width || 1024}×{activeModalImage.height || 1024} | 种子: {activeModalImage.seed}
@@ -1060,7 +1137,16 @@ export default function App() {
                   )}
                 </p>
               </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="md3-chip"
+                  style={{ color: 'var(--md-sys-color-error)', borderColor: 'var(--md-sys-color-error)' }}
+                  onClick={() => handleDeleteHistory(activeModalImage.id)}
+                  title="删除该条历史记录"
+                >
+                  <Trash2 size={14} /> 删除记录
+                </button>
                 <a
                   href={activeModalImage.url}
                   download={activeModalImage.filename}

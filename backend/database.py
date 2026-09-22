@@ -161,9 +161,93 @@ def get_history(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         return result
 
 def delete_generation(gen_id: str) -> bool:
-    """根据 ID 删除一条历史记录"""
+    """根据 ID 删除一条历史记录，并安全清理关联的输出图片与临时参考图"""
+    import json
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT filename, input_image_url FROM generations WHERE id = ?", (gen_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        filename = row["filename"]
+        raw_input_url = row["input_image_url"] or ""
+
         cursor.execute("DELETE FROM generations WHERE id = ?", (gen_id,))
         conn.commit()
-        return cursor.rowcount > 0
+
+        # 清理输出文件（保护 demo 示例图不被误删）
+        if filename and filename != "demo_honoka_chibi.png":
+            out_file = BASE_DIR / "outputs" / filename
+            try:
+                if out_file.exists():
+                    out_file.unlink()
+            except Exception as e:
+                logger.warning(f"删除输出图片 {filename} 失败: {e}")
+
+        # 清理关联的任务参考图
+        ref_urls = []
+        if raw_input_url.startswith("["):
+            try:
+                ref_urls = json.loads(raw_input_url)
+            except Exception:
+                ref_urls = [raw_input_url]
+        elif raw_input_url:
+            ref_urls = [raw_input_url]
+
+        for ref_url in ref_urls:
+            if ref_url.startswith("/outputs/ref_"):
+                ref_filename = ref_url.replace("/outputs/", "")
+                ref_file = BASE_DIR / "outputs" / ref_filename
+                try:
+                    if ref_file.exists():
+                        ref_file.unlink()
+                except Exception as e:
+                    logger.warning(f"删除参考图 {ref_filename} 失败: {e}")
+
+        return True
+
+def clear_all_generations() -> int:
+    """清空所有历史生成记录并清理 outputs 目录中除 demo 外的生成图片"""
+    import json
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT filename, input_image_url FROM generations")
+        rows = cursor.fetchall()
+        count = len(rows)
+
+        cursor.execute("DELETE FROM generations")
+        conn.commit()
+
+        for r in rows:
+            filename = r["filename"]
+            raw_input_url = r["input_image_url"] or ""
+
+            if filename and filename != "demo_honoka_chibi.png":
+                out_file = BASE_DIR / "outputs" / filename
+                try:
+                    if out_file.exists():
+                        out_file.unlink()
+                except Exception:
+                    pass
+
+            ref_urls = []
+            if raw_input_url.startswith("["):
+                try:
+                    ref_urls = json.loads(raw_input_url)
+                except Exception:
+                    ref_urls = [raw_input_url]
+            elif raw_input_url:
+                ref_urls = [raw_input_url]
+
+            for ref_url in ref_urls:
+                if ref_url.startswith("/outputs/ref_"):
+                    ref_filename = ref_url.replace("/outputs/", "")
+                    ref_file = BASE_DIR / "outputs" / ref_filename
+                    try:
+                        if ref_file.exists():
+                            ref_file.unlink()
+                    except Exception:
+                        pass
+
+        return count

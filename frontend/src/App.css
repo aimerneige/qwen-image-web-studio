@@ -746,6 +746,32 @@
   gap: 16px;
 }
 
+.history-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.btn-clear-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--md-sys-shape-full);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background-color: transparent;
+  color: var(--md-sys-color-error);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-clear-history:hover {
+  background-color: var(--md-sys-color-error-container);
+  border-color: var(--md-sys-color-error);
+}
+
 .history-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -761,12 +787,47 @@
   transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .history-card:hover {
   box-shadow: var(--md-sys-elevation-2);
   transform: translateY(-2px);
   border-color: var(--md-sys-color-primary);
+}
+
+.history-card-delete {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background-color: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 0.2s, background-color 0.2s;
+  z-index: 2;
+}
+
+.history-card:hover .history-card-delete {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .history-card-delete {
+    opacity: 0.85;
+  }
+}
+
+.history-card-delete:hover {
+  background-color: var(--md-sys-color-error);
 }
 
 .history-thumb {

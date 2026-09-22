@@ -62,5 +62,29 @@ class TestDatabase(unittest.TestCase):
         deleted = delete_generation("test_gen_multi_001")
         self.assertTrue(deleted)
 
+    def test_clear_all_generations(self):
+        from backend.database import clear_all_generations
+        test_item1 = {
+            "id": "test_clear_1",
+            "filename": "test_c1.png",
+            "url": "/outputs/test_c1.png",
+            "prompt": "clear test 1",
+            "created_at": "2026-09-22 13:10:00",
+        }
+        test_item2 = {
+            "id": "test_clear_2",
+            "filename": "test_c2.png",
+            "url": "/outputs/test_c2.png",
+            "prompt": "clear test 2",
+            "created_at": "2026-09-22 13:10:01",
+        }
+        insert_generation(test_item1)
+        insert_generation(test_item2)
+
+        count = clear_all_generations()
+        self.assertGreaterEqual(count, 2)
+        history = get_history()
+        self.assertEqual(len(history), 0)
+
 if __name__ == "__main__":
     unittest.main()
