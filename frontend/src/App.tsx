@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Sparkles,
   Lock,
@@ -24,45 +24,8 @@ import {
   X
 } from 'lucide-react'
 import './App.css'
-
-interface TaskProgress {
-  task_id?: string
-  status: string
-  message: string
-  step: number
-  total_steps: number
-  percent: number
-  elapsed?: number
-  eta?: number
-  batch_index?: number
-  batch_total?: number
-}
-
-interface UploadedImage {
-  id: string
-  url: string
-  name: string
-}
-
-interface ImageResult {
-  id: string
-  filename: string
-  url: string
-  prompt: string
-  negative_prompt?: string
-  has_input_image?: boolean
-  input_image_url?: string
-  input_image_urls?: string[]
-  seed?: number
-  steps?: number
-  width?: number
-  height?: number
-  elapsed?: number
-  created_at?: string
-  batch_index?: number
-  batch_total?: number
-  is_batch_end?: boolean
-}
+import type { TaskProgress, UploadedImage, ImageResult } from './types'
+import BatchProcessing, { type BatchCallbacks } from './BatchProcessing'
 
 const TEXT_PRESETS = [
   {
@@ -137,6 +100,17 @@ const AUTO_RESOLUTION = { label: '🖼️ 自适应参考图比例 (Auto)', widt
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [activeTab, setActiveTab] = useState<'studio' | 'batch'>('studio')
+  const [batchStats, setBatchStats] = useState<{ total: number; completed: number; isRunning: boolean }>({
+    total: 0,
+    completed: 0,
+    isRunning: false,
+  })
+  const batchCallbacksRef = useRef<BatchCallbacks>({})
+  const registerBatchCallbacks = useCallback((callbacks: BatchCallbacks) => {
+    batchCallbacksRef.current = callbacks
+  }, [])
+
   const [prompt, setPrompt] = useState('1girl, Kousaka Honoka, school uniform, chibi, transparent background, highly detailed')
   const [negativePrompt, setNegativePrompt] = useState('')
   const [inputImages, setInputImages] = useState<UploadedImage[]>([])
@@ -250,6 +224,29 @@ export default function App() {
 
     // 4. 关闭弹窗并滚动至顶部
     setActiveModalImage(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // 从批量处理卡片中 Remix 到工作区 (覆盖提示词与参考图)
+  const handleRemixFromBatch = (remixPrompt: string, negPrompt?: string, refUrl?: string) => {
+    setPrompt(remixPrompt)
+    if (negPrompt !== undefined) {
+      setNegativePrompt(negPrompt)
+    }
+    if (refUrl) {
+      setInputImages([
+        {
+          id: `remix-batch-${Date.now()}`,
+          url: refUrl,
+          name: refUrl.split('/').pop() || '参考图.png',
+        },
+      ])
+      setResolution(AUTO_RESOLUTION)
+    } else {
+      setInputImages([])
+      setResolution(STANDARD_RESOLUTIONS[0])
+    }
+    setActiveTab('studio')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -427,6 +424,7 @@ export default function App() {
           const data = JSON.parse(e.data)
           setIsBusy(true)
           setProgress(data)
+          batchCallbacksRef.current.onProgress?.(data)
         } catch (err) {
           console.error(err)
         }
@@ -437,6 +435,7 @@ export default function App() {
           const data: ImageResult = JSON.parse(e.data)
           setCurrentResult(data)
           setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
+          batchCallbacksRef.current.onComplete?.(data)
 
           // 若批次未结束，保持 isBusy 为 true，等待后续图片
           if (data.is_batch_end !== false && (!data.batch_total || data.batch_index === data.batch_total)) {
@@ -453,6 +452,7 @@ export default function App() {
         setIsBusy(false)
         setIsCancelling(false)
         setProgress(null)
+        batchCallbacksRef.current.onCancelled?.()
         let cancelMsg = '任务已提前终止并释放 GPU 硬件锁'
         if (e.data) {
           try {
@@ -465,14 +465,17 @@ export default function App() {
       })
 
       eventSource.addEventListener('error', (e: any) => {
+        let errMsg = '生成失败'
         if (e.data) {
           try {
             const data = JSON.parse(e.data)
-            setErrorMessage(data.message || '生成失败')
+            if (data.message) errMsg = data.message
+            setErrorMessage(errMsg)
           } catch {}
         }
         setIsBusy(false)
         setIsCancelling(false)
+        batchCallbacksRef.current.onError?.(errMsg)
       })
 
       eventSource.onerror = () => {
@@ -549,6 +552,31 @@ export default function App() {
           <span className="brand-title">Qwen-Image 2.1 Studio</span>
         </div>
 
+        {/* Mode Navigation Tabs */}
+        <nav className="top-nav-tabs">
+          <button
+            type="button"
+            className={`nav-tab-btn ${activeTab === 'studio' ? 'active' : ''}`}
+            onClick={() => setActiveTab('studio')}
+          >
+            <Sparkles size={16} />
+            <span>单图 / 多图创作</span>
+          </button>
+          <button
+            type="button"
+            className={`nav-tab-btn ${activeTab === 'batch' ? 'active' : ''}`}
+            onClick={() => setActiveTab('batch')}
+          >
+            <Layers size={16} />
+            <span>批量图片处理</span>
+            {batchStats.total > 0 && (
+              <span className={`nav-tab-badge ${batchStats.isRunning ? 'pulse' : ''}`}>
+                {batchStats.isRunning ? `${batchStats.completed}/${batchStats.total}` : batchStats.total}
+              </span>
+            )}
+          </button>
+        </nav>
+
         <div className="top-bar-actions">
           {/* 硬件互斥锁状态胶囊 */}
           <div className={`lock-badge ${isBusy ? 'busy' : 'idle'}`}>
@@ -577,7 +605,9 @@ export default function App() {
 
       {/* Main Content */}
       <main className="main-content">
-        <div className="workspace-grid">
+        {/* Studio Tab View */}
+        <div style={{ display: activeTab === 'studio' ? 'block' : 'none', width: '100%' }}>
+          <div className="workspace-grid">
           {/* Left Panel: Prompt & Controls */}
           <div className="md3-card">
             <div className="card-header">
@@ -987,6 +1017,17 @@ export default function App() {
                   <span>{isCancelling ? '正在中断...' : (progress?.batch_total && progress.batch_total > 1 ? '提前终止' : '取消任务')}</span>
                 </button>
               </div>
+            ) : batchStats.isRunning ? (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={true}
+                title="当前正在执行批量处理任务，系统锁定单任务独占。可切换至批量页面查看或暂停"
+                style={{ opacity: 0.7 }}
+              >
+                <Layers size={18} />
+                <span>批量处理进行中 (已完成 {batchStats.completed}/{batchStats.total})</span>
+              </button>
             ) : (
               <button
                 type="button"
@@ -1197,6 +1238,26 @@ export default function App() {
             </div>
           </section>
         )}
+        </div>
+
+        {/* Batch Processing Tab View */}
+        <div style={{ display: activeTab === 'batch' ? 'block' : 'none', width: '100%' }}>
+          <BatchProcessing
+            isBusy={isBusy}
+            isCancelling={isCancelling}
+            currentProgress={progress}
+            registerBatchCallbacks={registerBatchCallbacks}
+            onTaskComplete={(result) => {
+              setCurrentResult(result)
+              setHistory((prev) => [result, ...prev.filter((item) => item.id !== result.id)])
+            }}
+            onRemixToStudio={handleRemixFromBatch}
+            setErrorMessage={setErrorMessage}
+            onQueueStatsChange={(total, completed, isRunning) => {
+              setBatchStats({ total, completed, isRunning })
+            }}
+          />
+        </div>
       </main>
 
       {/* Generation Details & Remix Dialog */}

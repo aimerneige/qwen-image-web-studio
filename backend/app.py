@@ -137,6 +137,49 @@ async def delete_history_item(item_id: str):
         raise HTTPException(status_code=404, detail="未找到该历史记录")
     return {"success": True, "message": "历史记录已删除"}
 
+class BatchExportItem(BaseModel):
+    filename: str
+    download_name: Optional[str] = None
+
+class BatchExportRequest(BaseModel):
+    items: List[BatchExportItem]
+
+@app.post("/api/batch-export")
+async def batch_export_zip(req: BatchExportRequest):
+    """打包下载批量生成的图片为 ZIP 压缩包"""
+    import io
+    import time
+    import zipfile
+
+    if not req.items:
+        raise HTTPException(status_code=400, detail="导出列表不能为空")
+
+    buf = io.BytesIO()
+    valid_count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for item in req.items:
+            # 严格提取纯文件名，防止目录遍历注入
+            clean_name = Path(item.filename).name
+            file_path = OUTPUTS_DIR / clean_name
+            if file_path.exists() and file_path.is_file():
+                arc_name = Path(item.download_name).name if item.download_name else clean_name
+                zip_file.write(file_path, arcname=arc_name)
+                valid_count += 1
+
+    if valid_count == 0:
+        raise HTTPException(status_code=404, detail="未找到任何可导出的图片文件")
+
+    buf.seek(0)
+    zip_filename = f"qwen_batch_{int(time.time())}.zip"
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            "Cache-Control": "no-cache",
+        },
+    )
+
 # 挂载输出图像目录
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
