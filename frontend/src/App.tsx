@@ -155,9 +155,21 @@ export default function App() {
   const [history, setHistory] = useState<ImageResult[]>([])
   const [activeModalImage, setActiveModalImage] = useState<ImageResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const [modalCopied, setModalCopied] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 监听 ESC 键关闭详情弹窗
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && activeModalImage) {
+        setActiveModalImage(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeModalImage])
 
   // 取消正在运行的任务
   const handleCancel = async () => {
@@ -188,6 +200,27 @@ export default function App() {
     navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  // 复制弹窗内的提示词
+  const copyModalPrompt = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setModalCopied(true)
+    setTimeout(() => setModalCopied(false), 2000)
+  }
+
+  // Remix 混编：将历史记录的完整提示词覆盖到工作区，若任务执行中则拒绝
+  const handleRemix = (item: ImageResult) => {
+    if (isBusy) {
+      setErrorMessage('工作区正在执行生成任务，无法覆盖提示词')
+      return
+    }
+    setPrompt(item.prompt)
+    if (item.negative_prompt !== undefined && item.negative_prompt !== '') {
+      setNegativePrompt(item.negative_prompt)
+    }
+    setActiveModalImage(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // 处理多张图片文件加载
@@ -1097,10 +1130,7 @@ export default function App() {
                 <div
                   key={item.id}
                   className="history-card"
-                  onClick={() => {
-                    setCurrentResult(item)
-                    setPrompt(item.prompt)
-                  }}
+                  onClick={() => setActiveModalImage(item)}
                 >
                   <button
                     type="button"
@@ -1139,28 +1169,154 @@ export default function App() {
         )}
       </main>
 
-      {/* Fullscreen Modal Dialog */}
+      {/* Generation Details & Remix Dialog */}
       {activeModalImage && (
         <div className="modal-overlay" onClick={() => setActiveModalImage(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <img
-              src={activeModalImage.url}
-              alt={activeModalImage.prompt}
-              className="modal-image"
-            />
-            <div className="modal-footer">
-              <div style={{ maxWidth: '65%', fontSize: '13px', color: 'var(--md-sys-color-on-surface)' }}>
-                <p style={{ fontWeight: 500 }}>{activeModalImage.prompt}</p>
-                <p style={{ fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
-                  时间: {activeModalImage.created_at} | 耗时: {activeModalImage.elapsed}s | 步数: {activeModalImage.steps || 28} | 尺寸: {activeModalImage.width || 1024}×{activeModalImage.height || 1024} | 种子: {activeModalImage.seed}
-                  {activeModalImage.has_input_image && (
-                    activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 1
-                      ? ` | 🖼️ 多图参考 (${activeModalImage.input_image_urls.length}张)`
-                      : ' | 🖼️ 图生图'
-                  )}
-                </p>
+            <div className="modal-header">
+              <div className="modal-title-group">
+                <h3 className="modal-title">生成记录详情</h3>
+                {activeModalImage.created_at && (
+                  <span style={{ fontSize: '12px', color: 'var(--md-sys-color-outline)' }}>
+                    {activeModalImage.created_at}
+                  </span>
+                )}
+                {activeModalImage.has_input_image && (
+                  <span className="reference-badge" style={{ fontSize: '11px', padding: '2px 8px' }}>
+                    {activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 1
+                      ? `多图参考 (${activeModalImage.input_image_urls.length}张)`
+                      : '图生图引导'}
+                  </span>
+                )}
               </div>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setActiveModalImage(null)}
+                title="关闭"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <div className="modal-image-pane">
+                <img
+                  src={activeModalImage.url}
+                  alt={activeModalImage.prompt}
+                  className="modal-main-image"
+                />
+                {activeModalImage.has_input_image && ((activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 0) || activeModalImage.input_image_url) && (
+                  <div className="modal-ref-thumbs">
+                    <span style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.75)', marginRight: '4px' }}>
+                      参考输入图:
+                    </span>
+                    {((activeModalImage.input_image_urls && activeModalImage.input_image_urls.length > 0)
+                      ? activeModalImage.input_image_urls
+                      : [activeModalImage.input_image_url!]
+                    ).map((refUrl, idx) => (
+                      <div key={idx} className="modal-ref-thumb-item">
+                        <a href={refUrl} target="_blank" rel="noreferrer" title={`点击查看参考图 ${idx + 1}`}>
+                          <img
+                            src={refUrl}
+                            alt={`参考图 ${idx + 1}`}
+                            className="modal-ref-thumb-img"
+                          />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-details-pane">
+                {isBusy && (
+                  <div
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: 'var(--md-sys-shape-s)',
+                      backgroundColor: 'var(--md-sys-color-warning-container)',
+                      color: 'var(--md-sys-color-on-warning-container)',
+                      fontSize: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <Lock size={14} />
+                    <span>工作区正在执行生成任务，暂无法执行 Remix 覆盖</span>
+                  </div>
+                )}
+
+                <div>
+                  <div className="modal-section-title">
+                    <span>完整提示词 (Prompt)</span>
+                    <button
+                      type="button"
+                      onClick={() => copyModalPrompt(activeModalImage.prompt)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--md-sys-color-primary)',
+                      }}
+                    >
+                      {modalCopied ? <Check size={12} /> : <Copy size={12} />}
+                      <span>{modalCopied ? '已复制' : '复制'}</span>
+                    </button>
+                  </div>
+                  <div className="modal-text-box">
+                    {activeModalImage.prompt}
+                  </div>
+                </div>
+
+                {activeModalImage.negative_prompt && (
+                  <div>
+                    <div className="modal-section-title">
+                      <span>反向提示词 (Negative Prompt)</span>
+                    </div>
+                    <div className="modal-text-box" style={{ fontSize: '12px', color: 'var(--md-sys-color-on-surface-variant)' }}>
+                      {activeModalImage.negative_prompt}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div className="modal-section-title">
+                    <span>生成参数</span>
+                  </div>
+                  <div className="modal-param-grid">
+                    <div className="modal-param-card">
+                      <span className="modal-param-label">图像尺寸</span>
+                      <span className="modal-param-value">
+                        {activeModalImage.width || 1024} × {activeModalImage.height || 1024}
+                      </span>
+                    </div>
+                    <div className="modal-param-card">
+                      <span className="modal-param-label">采样步数</span>
+                      <span className="modal-param-value">{activeModalImage.steps || 28} 步</span>
+                    </div>
+                    <div className="modal-param-card">
+                      <span className="modal-param-label">随机种子</span>
+                      <span className="modal-param-value">{activeModalImage.seed ?? '随机'}</span>
+                    </div>
+                    <div className="modal-param-card">
+                      <span className="modal-param-label">推理耗时</span>
+                      <span className="modal-param-value">
+                        {activeModalImage.elapsed !== undefined ? `${activeModalImage.elapsed}s` : '-'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <div className="modal-footer-actions-left">
                 <button
                   type="button"
                   className="md3-chip"
@@ -1175,15 +1331,21 @@ export default function App() {
                   download={activeModalImage.filename}
                   className="md3-chip"
                   style={{ textDecoration: 'none' }}
+                  title="下载图片"
                 >
                   <Download size={14} /> 下载图片
                 </a>
+              </div>
+              <div className="modal-footer-actions-right">
                 <button
                   type="button"
-                  className="icon-button"
-                  onClick={() => setActiveModalImage(null)}
+                  className="btn-remix"
+                  onClick={() => handleRemix(activeModalImage)}
+                  title={isBusy ? '工作区正在执行生成任务，无法覆盖提示词' : '将完整提示词覆盖到工作区'}
+                  style={isBusy ? { opacity: 0.6, cursor: 'not-allowed' } : {}}
                 >
-                  <X size={20} />
+                  <Sparkles size={16} />
+                  <span>Remix 提示词</span>
                 </button>
               </div>
             </div>
