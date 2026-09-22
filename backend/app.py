@@ -126,13 +126,6 @@ async def event_stream(request: Request):
 async def get_history():
     return {"history": model_manager.history}
 
-@app.delete("/api/history")
-async def clear_all_history():
-    """从数据库中清空全部历史生成记录"""
-    from backend.database import clear_all_generations
-    count = clear_all_generations()
-    return {"success": True, "message": f"已清空 {count} 条历史记录"}
-
 @app.delete("/api/history/{item_id}")
 async def delete_history_item(item_id: str):
     """从数据库中删除指定历史生成记录"""

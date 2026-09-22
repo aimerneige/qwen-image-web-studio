@@ -275,28 +275,6 @@ export default function App() {
     }
   }
 
-  // 清空全部生成历史记录
-  const handleClearAllHistory = async () => {
-    if (history.length === 0) return
-    if (!window.confirm(`确定要清空全部 ${history.length} 条生成历史记录吗？相关图片将被永久删除。`)) {
-      return
-    }
-
-    try {
-      const res = await fetch('/api/history', { method: 'DELETE' })
-      if (res.ok) {
-        setHistory([])
-        setCurrentResult(null)
-        setActiveModalImage(null)
-      } else {
-        const err = await res.json()
-        setErrorMessage(err.detail || '清空历史失败')
-      }
-    } catch (err: any) {
-      setErrorMessage(err.message || '网络连接错误')
-    }
-  }
-
   // 剪贴板全局粘贴图片监听 (Ctrl + V)
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -1054,21 +1032,10 @@ export default function App() {
         {/* History Gallery */}
         {history.length > 0 && (
           <section className="history-section">
-            <div className="history-header-row">
-              <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
-                <Clock size={18} color="var(--md-sys-color-primary)" />
-                历史生成记录 ({history.length})
-              </h3>
-              <button
-                type="button"
-                className="btn-clear-history"
-                onClick={handleClearAllHistory}
-                title="清空全部生成记录"
-              >
-                <Trash2 size={13} />
-                <span>清空历史</span>
-              </button>
-            </div>
+            <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Clock size={18} color="var(--md-sys-color-primary)" />
+              历史生成记录 ({history.length})
+            </h3>
             <div className="history-grid">
               {history.map((item) => (
                 <div

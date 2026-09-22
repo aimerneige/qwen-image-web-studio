@@ -746,32 +746,6 @@
   gap: 16px;
 }
 
-.history-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.btn-clear-history {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: var(--md-sys-shape-full);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  background-color: transparent;
-  color: var(--md-sys-color-error);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-clear-history:hover {
-  background-color: var(--md-sys-color-error-container);
-  border-color: var(--md-sys-color-error);
-}
-
 .history-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
