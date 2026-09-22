@@ -890,11 +890,9 @@ export default function App() {
                     <span className="history-prompt" title={item.prompt}>
                       {item.prompt}
                     </span>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span className="history-time">{item.created_at || '刚刚'}</span>
-                      <span style={{ fontSize: '11px', color: 'var(--md-sys-color-primary)' }}>
-                        载入配置 ↵
-                      </span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
+                      <span>{item.created_at || '刚刚'}</span>
+                      {item.elapsed !== undefined && <span>{item.elapsed}s</span>}
                     </div>
                   </div>
                 </div>
@@ -917,8 +915,8 @@ export default function App() {
               <div style={{ maxWidth: '70%', fontSize: '13px', color: 'var(--md-sys-color-on-surface)' }}>
                 <p style={{ fontWeight: 500 }}>{activeModalImage.prompt}</p>
                 <p style={{ fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
-                  {activeModalImage.created_at} | 步数: {activeModalImage.steps || 28} | 种子: {activeModalImage.seed}
-                  {activeModalImage.has_input_image && ' | 图生图生成'}
+                  时间: {activeModalImage.created_at} | 耗时: {activeModalImage.elapsed}s | 步数: {activeModalImage.steps || 28} | 尺寸: {activeModalImage.width || 1024}×{activeModalImage.height || 1024} | 种子: {activeModalImage.seed}
+                  {activeModalImage.has_input_image && ' | 🖼️ 图生图'}
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>

@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 from diffusers import DiffusionPipeline
 from PIL import Image
+from backend.database import init_db, insert_generation, get_history, delete_generation
 
 logger = logging.getLogger("qwen_image_service")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -24,35 +25,13 @@ class ModelManager:
         self.is_busy: bool = False
         self._cancel_requested: bool = False
         self.current_task: Optional[Dict[str, Any]] = None
-        self.history: List[Dict[str, Any]] = []
         self._subscribers: List[asyncio.Queue] = []
-        self._load_existing_outputs()
+        init_db()  # 初始化 SQLite 表结构（若初次运行且有示例图，植入真实提示词 demo）
 
-    def _load_existing_outputs(self):
-        """扫描 outputs 目录，加载历史生成记录"""
-        # 如果根目录下有已生成的示例图片 honoka_transparent.png，也可以拷一份或者链接过来
-        initial_file = BASE_DIR / "honoka_transparent.png"
-        if initial_file.exists():
-            target_demo = OUTPUTS_DIR / "demo_honoka_chibi.png"
-            if not target_demo.exists():
-                try:
-                    import shutil
-                    shutil.copyfile(initial_file, target_demo)
-                except Exception as e:
-                    logger.warning(f"Failed to copy demo image: {e}")
-
-        for p in sorted(OUTPUTS_DIR.glob("*.png"), key=os.path.getmtime, reverse=True):
-            if p.is_file():
-                self.history.append({
-                    "id": p.stem,
-                    "filename": p.name,
-                    "url": f"/outputs/{p.name}",
-                    "prompt": "历史生成图片" if not p.name.startswith("demo") else "1girl, Kousaka Honoka, school uniform, chibi, transparent background, highly detailed",
-                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(p))),
-                    "steps": 28,
-                    "width": 1024,
-                    "height": 1024,
-                })
+    @property
+    def history(self) -> List[Dict[str, Any]]:
+        """从 SQLite 数据库实时查询历史记录（无 prompt 的旧扫描图片直接跳过）"""
+        return get_history(limit=50)
 
     def subscribe(self) -> asyncio.Queue:
         queue = asyncio.Queue()
@@ -348,7 +327,8 @@ class ModelManager:
                     seed=seed,
                     loop=loop,
                 )
-                self.history.insert(0, result)
+                # 持久化保存至 SQLite 数据库
+                insert_generation(result)
                 self._broadcast("complete", result)
                 return result
             except Exception as e:

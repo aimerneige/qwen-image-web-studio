@@ -124,6 +124,15 @@ async def event_stream(request: Request):
 async def get_history():
     return {"history": model_manager.history}
 
+@app.delete("/api/history/{item_id}")
+async def delete_history_item(item_id: str):
+    """从数据库中删除指定历史生成记录"""
+    from backend.database import delete_generation
+    success = delete_generation(item_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="未找到该历史记录")
+    return {"success": True, "message": "历史记录已删除"}
+
 # 挂载输出图像目录
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
