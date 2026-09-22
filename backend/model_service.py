@@ -113,10 +113,15 @@ class ModelManager:
         height: Optional[int],
         seed: Optional[int],
         loop: asyncio.AbstractEventLoop,
+        batch_index: int = 1,
+        batch_total: int = 1,
+        preloaded_images: Optional[List[Image.Image]] = None,
+        preloaded_urls: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """在独立工作线程中同步执行生成，并通过 event loop 回调广播进度"""
+        """在独立工作线程中同步执行单张生成，并通过 event loop 回调广播进度"""
         start_time = time.time()
-        
+        msg_prefix = f"[{batch_index}/{batch_total}] " if batch_total > 1 else ""
+
         # 1. 检查或加载模型
         if self.pipeline is None:
             loop.call_soon_threadsafe(
@@ -124,6 +129,8 @@ class ModelManager:
                 "progress",
                 {
                     "task_id": task_id,
+                    "batch_index": batch_index,
+                    "batch_total": batch_total,
                     "status": "loading_model",
                     "message": "首次使用：正在加载模型架构与权重（极致层级卸载保护显存）...",
                     "step": 0,
@@ -135,31 +142,35 @@ class ModelManager:
             self._load_pipeline_sync()
 
         # 2. 处理参考图片（图生图 / 多图引导）
-        input_pils: List[Image.Image] = []
-        input_image_urls: List[str] = []
-        if images_data:
-            import io
-            import base64
-            for idx, raw_item in enumerate(images_data):
-                if not raw_item or not raw_item.strip():
-                    continue
-                try:
-                    raw_b64 = raw_item.strip()
-                    if "," in raw_b64:
-                        raw_b64 = raw_b64.split(",", 1)[1]
-                    image_bytes = base64.b64decode(raw_b64)
-                    pil_img = Image.open(io.BytesIO(image_bytes))
-                    if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
-                        pil_img = pil_img.convert("RGB")
-                    
-                    ref_filename = f"ref_{int(time.time())}_{task_id[:8]}_{idx + 1}.png"
-                    ref_filepath = OUTPUTS_DIR / ref_filename
-                    pil_img.save(ref_filepath)
-                    input_pils.append(pil_img)
-                    input_image_urls.append(f"/outputs/{ref_filename}")
-                    logger.info(f"已载入参考图[{idx + 1}]: {ref_filename}, 尺寸={pil_img.size}")
-                except Exception as e:
-                    logger.warning(f"解析第 {idx + 1} 张参考图片失败: {e}")
+        if preloaded_images is not None:
+            input_pils = list(preloaded_images)
+            input_image_urls = list(preloaded_urls or [])
+        else:
+            input_pils: List[Image.Image] = []
+            input_image_urls: List[str] = []
+            if images_data:
+                import io
+                import base64
+                for idx, raw_item in enumerate(images_data):
+                    if not raw_item or not raw_item.strip():
+                        continue
+                    try:
+                        raw_b64 = raw_item.strip()
+                        if "," in raw_b64:
+                            raw_b64 = raw_b64.split(",", 1)[1]
+                        image_bytes = base64.b64decode(raw_b64)
+                        pil_img = Image.open(io.BytesIO(image_bytes))
+                        if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
+                            pil_img = pil_img.convert("RGB")
+
+                        ref_filename = f"ref_{int(time.time())}_{task_id[:8]}_{idx + 1}.png"
+                        ref_filepath = OUTPUTS_DIR / ref_filename
+                        pil_img.save(ref_filepath)
+                        input_pils.append(pil_img)
+                        input_image_urls.append(f"/outputs/{ref_filename}")
+                        logger.info(f"已载入参考图[{idx + 1}]: {ref_filename}, 尺寸={pil_img.size}")
+                    except Exception as e:
+                        logger.warning(f"解析第 {idx + 1} 张参考图片失败: {e}")
 
         num_imgs = len(input_pils)
         loop.call_soon_threadsafe(
@@ -167,9 +178,13 @@ class ModelManager:
             "progress",
             {
                 "task_id": task_id,
+                "batch_index": batch_index,
+                "batch_total": batch_total,
                 "status": "encoding_prompt",
-                "message": f"正在编码提示词与多图特征 ({num_imgs}张参考图)..." if num_imgs > 1 else (
-                    "正在编码提示词与参考图多模态特征..." if num_imgs == 1 else "正在编码文本提示词特征..."
+                "message": f"{msg_prefix}" + (
+                    f"正在编码提示词与多图特征 ({num_imgs}张参考图)..." if num_imgs > 1 else (
+                        "正在编码提示词与参考图多模态特征..." if num_imgs == 1 else "正在编码文本提示词特征..."
+                    )
                 ),
                 "step": 0,
                 "total_steps": steps,
@@ -200,8 +215,10 @@ class ModelManager:
 
             status_payload = {
                 "task_id": task_id,
+                "batch_index": batch_index,
+                "batch_total": batch_total,
                 "status": "denoising",
-                "message": f"正在去噪采样 (Step {current_step}/{steps})",
+                "message": f"{msg_prefix}正在去噪采样 (Step {current_step}/{steps})",
                 "step": current_step,
                 "total_steps": steps,
                 "percent": percent,
@@ -214,7 +231,7 @@ class ModelManager:
             loop.call_soon_threadsafe(self._broadcast, "progress", status_payload)
             return callback_kwargs
 
-        logger.info(f"开始生成任务 {task_id}: prompt='{prompt}', images_count={num_imgs}, steps={steps}, size={width}x{height}, seed={seed}")
+        logger.info(f"开始生成任务 {task_id} ({batch_index}/{batch_total}): prompt='{prompt}', images_count={num_imgs}, steps={steps}, size={width}x{height}, seed={seed}")
 
         if self._cancel_requested:
             raise RuntimeError("TaskCancelled: 任务已由用户手动取消")
@@ -251,8 +268,10 @@ class ModelManager:
             "progress",
             {
                 "task_id": task_id,
+                "batch_index": batch_index,
+                "batch_total": batch_total,
                 "status": "saving",
-                "message": "正在解码保存最终高分辨率图像...",
+                "message": f"{msg_prefix}正在解码保存最终图像...",
                 "step": steps,
                 "total_steps": steps,
                 "percent": 96,
@@ -266,7 +285,7 @@ class ModelManager:
         image.save(output_filepath)
 
         elapsed = round(time.time() - start_time, 1)
-        logger.info(f"生成任务 {task_id} 完成，耗时 {elapsed}s，保存至 {output_filepath}")
+        logger.info(f"生成任务 {task_id} ({batch_index}/{batch_total}) 完成，耗时 {elapsed}s，保存至 {output_filepath}")
 
         result_data = {
             "id": task_id,
@@ -283,6 +302,8 @@ class ModelManager:
             "height": image.height,
             "elapsed": elapsed,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "batch_index": batch_index,
+            "batch_total": batch_total,
         }
         return result_data
 
@@ -296,8 +317,9 @@ class ModelManager:
         width: Optional[int] = 1024,
         height: Optional[int] = 1024,
         seed: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """异步任务分发入口：严格利用 async 互斥锁保障单任务独占"""
+        count: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """异步任务分发入口：严格利用 async 互斥锁保障单任务独占，按指定数量顺序执行生成"""
         if self._lock.locked():
             raise RuntimeError("当前已有任务正在执行中。由于模型占用极高硬件资源，系统已加锁限制单任务独占。")
 
@@ -306,17 +328,21 @@ class ModelManager:
         if image_data and image_data not in all_images:
             all_images.insert(0, image_data)
 
+        total_count = max(1, count)
+
         async with self._lock:
             self.is_busy = True
             self._cancel_requested = False
-            task_id = str(uuid.uuid4())
+            batch_id = str(uuid.uuid4())
             self.current_task = {
-                "id": task_id,
+                "id": batch_id,
                 "prompt": prompt,
                 "has_image": len(all_images) > 0,
                 "images_count": len(all_images),
+                "batch_index": 1,
+                "batch_total": total_count,
                 "status": "queued",
-                "message": "任务已接收，等待调度执行...",
+                "message": f"任务已接收，准备顺序生成 {total_count} 张图片..." if total_count > 1 else "任务已接收，等待调度执行...",
                 "step": 0,
                 "total_steps": steps,
                 "percent": 0,
@@ -325,37 +351,99 @@ class ModelManager:
             }
             self._broadcast("start", self.current_task)
 
+            # 预处理并复用参考图，避免批次重复写入磁盘
+            preloaded_pils = []
+            preloaded_urls = []
+            if all_images:
+                import io
+                import base64
+                for idx, raw_item in enumerate(all_images):
+                    if not raw_item or not raw_item.strip():
+                        continue
+                    try:
+                        raw_b64 = raw_item.strip()
+                        if "," in raw_b64:
+                            raw_b64 = raw_b64.split(",", 1)[1]
+                        image_bytes = base64.b64decode(raw_b64)
+                        pil_img = Image.open(io.BytesIO(image_bytes))
+                        if hasattr(pil_img, "mode") and pil_img.mode not in ("RGB", "RGBA"):
+                            pil_img = pil_img.convert("RGB")
+
+                        ref_filename = f"ref_{int(time.time())}_{batch_id[:8]}_{idx + 1}.png"
+                        ref_filepath = OUTPUTS_DIR / ref_filename
+                        pil_img.save(ref_filepath)
+                        preloaded_pils.append(pil_img)
+                        preloaded_urls.append(f"/outputs/{ref_filename}")
+                        logger.info(f"批次预加载参考图[{idx + 1}]: {ref_filename}")
+                    except Exception as e:
+                        logger.warning(f"预解析第 {idx + 1} 张参考图片失败: {e}")
+
             loop = asyncio.get_running_loop()
+            completed_results = []
+            base_seed = seed if (seed is not None and seed >= 0) else None
+
             try:
-                # 放入工作线程池执行阻塞型 PyTorch 推理
-                result = await asyncio.to_thread(
-                    self._generate_sync,
-                    task_id=task_id,
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    images_data=all_images,
-                    steps=steps,
-                    width=width,
-                    height=height,
-                    seed=seed,
-                    loop=loop,
-                )
-                # 持久化保存至 SQLite 数据库
-                insert_generation(result)
-                self._broadcast("complete", result)
-                return result
+                for idx in range(total_count):
+                    if self._cancel_requested:
+                        logger.info(f"批次生成在第 {idx + 1}/{total_count} 张前已被用户提前终止")
+                        break
+
+                    task_id = str(uuid.uuid4())
+                    current_seed = (base_seed + idx) if base_seed is not None else None
+
+                    self.current_task["id"] = task_id
+                    self.current_task["batch_index"] = idx + 1
+                    self.current_task["batch_total"] = total_count
+
+                    # 放入工作线程池顺序执行 PyTorch 推理
+                    result = await asyncio.to_thread(
+                        self._generate_sync,
+                        task_id=task_id,
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        images_data=None,
+                        steps=steps,
+                        width=width,
+                        height=height,
+                        seed=current_seed,
+                        loop=loop,
+                        batch_index=idx + 1,
+                        batch_total=total_count,
+                        preloaded_images=preloaded_pils,
+                        preloaded_urls=preloaded_urls,
+                    )
+
+                    insert_generation(result)
+                    completed_results.append(result)
+
+                    is_batch_end = (idx + 1 == total_count) or self._cancel_requested
+                    result_payload = dict(result)
+                    result_payload["is_batch_end"] = is_batch_end
+                    self._broadcast("complete", result_payload)
+
+                    if self._cancel_requested:
+                        logger.info(f"批次生成在第 {idx + 1}/{total_count} 张完成时收到提前终止信号")
+                        break
+
+                if self._cancel_requested:
+                    self._broadcast("cancelled", {
+                        "task_id": batch_id,
+                        "status": "cancelled",
+                        "message": f"任务已由用户提前终止 (已生成 {len(completed_results)}/{total_count} 张图片)",
+                    })
+                return completed_results
             except Exception as e:
                 if "TaskCancelled" in str(e):
-                    logger.info(f"任务 {task_id} 已成功中断取消")
+                    logger.info(f"批次任务被用户手动取消 (已完成 {len(completed_results)}/{total_count} 张)")
                     self._broadcast("cancelled", {
-                        "task_id": task_id,
+                        "task_id": batch_id,
                         "status": "cancelled",
-                        "message": "生成任务已由用户手动取消",
+                        "message": f"任务已由用户提前终止 (已生成 {len(completed_results)}/{total_count} 张图片)",
                     })
-                    return {"id": task_id, "status": "cancelled", "message": "任务已取消"}
-                logger.exception(f"任务 {task_id} 执行出错: {e}")
+                    return completed_results
+                logger.exception(f"任务执行出错: {e}")
                 err_data = {
-                    "task_id": task_id,
+                    "task_id": batch_id,
                     "status": "error",
                     "message": f"生成失败: {str(e)}",
                 }

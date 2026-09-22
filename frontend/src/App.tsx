@@ -34,6 +34,8 @@ interface TaskProgress {
   percent: number
   elapsed?: number
   eta?: number
+  batch_index?: number
+  batch_total?: number
 }
 
 interface UploadedImage {
@@ -57,6 +59,9 @@ interface ImageResult {
   height?: number
   elapsed?: number
   created_at?: string
+  batch_index?: number
+  batch_total?: number
+  is_batch_end?: boolean
 }
 
 const TEXT_PRESETS = [
@@ -137,6 +142,7 @@ export default function App() {
   const [inputImages, setInputImages] = useState<UploadedImage[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [steps, setSteps] = useState(28)
+  const [count, setCount] = useState<number>(1)
   const [resolution, setResolution] = useState(STANDARD_RESOLUTIONS[0])
   const [seed, setSeed] = useState<number | ''>('')
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -366,22 +372,33 @@ export default function App() {
       eventSource.addEventListener('complete', (e) => {
         try {
           const data: ImageResult = JSON.parse(e.data)
-          setIsBusy(false)
-          setIsCancelling(false)
-          setProgress(null)
           setCurrentResult(data)
           setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
+
+          // 若批次未结束，保持 isBusy 为 true，等待后续图片
+          if (data.is_batch_end !== false && (!data.batch_total || data.batch_index === data.batch_total)) {
+            setIsBusy(false)
+            setIsCancelling(false)
+            setProgress(null)
+          }
         } catch (err) {
           console.error(err)
         }
       })
 
-      eventSource.addEventListener('cancelled', () => {
+      eventSource.addEventListener('cancelled', (e: any) => {
         setIsBusy(false)
         setIsCancelling(false)
         setProgress(null)
-        setErrorMessage('任务已成功取消并释放 GPU 硬件锁')
-        setTimeout(() => setErrorMessage(null), 4000)
+        let cancelMsg = '任务已提前终止并释放 GPU 硬件锁'
+        if (e.data) {
+          try {
+            const data = JSON.parse(e.data)
+            if (data.message) cancelMsg = data.message
+          } catch {}
+        }
+        setErrorMessage(cancelMsg)
+        setTimeout(() => setErrorMessage(null), 5000)
       })
 
       eventSource.addEventListener('error', (e: any) => {
@@ -416,10 +433,12 @@ export default function App() {
     setIsBusy(true)
     setProgress({
       status: 'starting',
-      message: '正在提交任务并请求硬件互斥锁...',
+      message: count > 1 ? `正在提交任务 (顺序生成 ${count} 张)...` : '正在提交任务并请求硬件互斥锁...',
       step: 0,
       total_steps: steps,
       percent: 0,
+      batch_index: 1,
+      batch_total: count,
     })
 
     try {
@@ -435,6 +454,7 @@ export default function App() {
           width: resolution.width,
           height: resolution.height,
           seed: seed === '' ? -1 : Number(seed),
+          count,
         }),
       })
 
@@ -697,6 +717,31 @@ export default function App() {
               </div>
             </div>
 
+            {/* Batch Count (生成数量) */}
+            <div className="field-group">
+              <div className="slider-header">
+                <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--md-sys-color-on-surface-variant)' }}>
+                  生成数量 (Batch Count)
+                </span>
+                <span style={{ fontSize: '12px', color: 'var(--md-sys-color-primary)', fontWeight: 500 }}>
+                  {count === 1 ? '单张生成 (1)' : `连续顺序生成 ${count} 张 (支持提前终止)`}
+                </span>
+              </div>
+              <div className="chips-scroll">
+                {[1, 2, 3, 4, 8].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    className={`md3-chip ${count === num ? 'active' : ''}`}
+                    onClick={() => setCount(num)}
+                    disabled={isBusy}
+                  >
+                    {num} 张
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Advanced Settings Accordion */}
             <div className="field-group">
               <button
@@ -820,16 +865,21 @@ export default function App() {
                     {progress.message || '生成计算中...'}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {progress.batch_total && progress.batch_total > 1 && (
+                      <span className="reference-badge" style={{ fontSize: '11px', padding: '2px 8px' }}>
+                        第 {progress.batch_index || 1} / {progress.batch_total} 张
+                      </span>
+                    )}
                     <span>{progress.percent}%</span>
                     <button
                       type="button"
                       className="btn-cancel-chip"
                       onClick={handleCancel}
                       disabled={isCancelling}
-                      title="取消当前生成任务"
+                      title={progress.batch_total && progress.batch_total > 1 ? '提前终止后续生成并保留已生成图片' : '取消当前生成任务'}
                     >
                       <Square size={11} fill="currentColor" />
-                      <span>{isCancelling ? '取消中...' : '取消'}</span>
+                      <span>{isCancelling ? '终止中...' : (progress.batch_total && progress.batch_total > 1 ? '提前终止' : '取消')}</span>
                     </button>
                   </div>
                 </div>
@@ -857,7 +907,11 @@ export default function App() {
                   style={{ flex: 1 }}
                 >
                   <div className="spinner" />
-                  <span>任务执行中 (硬件独占保护)</span>
+                  <span>
+                    {progress?.batch_total && progress.batch_total > 1
+                      ? `任务执行中 (顺序第 ${progress.batch_index || 1}/${progress.batch_total} 张)`
+                      : '任务执行中 (硬件独占保护)'}
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -867,7 +921,7 @@ export default function App() {
                   title="中断当前推理并释放 GPU 硬件锁"
                 >
                   <Square size={16} fill="currentColor" />
-                  <span>{isCancelling ? '正在中断...' : '取消任务'}</span>
+                  <span>{isCancelling ? '正在中断...' : (progress?.batch_total && progress.batch_total > 1 ? '提前终止' : '取消任务')}</span>
                 </button>
               </div>
             ) : (
@@ -879,11 +933,13 @@ export default function App() {
               >
                 <Sparkles size={18} />
                 <span>
-                  {inputImages.length > 1
-                    ? `基于 ${inputImages.length} 张参考图融合生成`
-                    : inputImages.length === 1
-                    ? '基于参考图开始生成'
-                    : '开始文生图'}
+                  {count > 1
+                    ? `顺序生成 ${count} 张图片`
+                    : (inputImages.length > 1
+                      ? `基于 ${inputImages.length} 张参考图融合生成`
+                      : inputImages.length === 1
+                      ? '基于参考图开始生成'
+                      : '开始文生图')}
                 </span>
               </button>
             )}

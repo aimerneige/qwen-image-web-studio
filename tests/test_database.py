@@ -19,10 +19,10 @@ class TestDatabase(unittest.TestCase):
             "width": 1024,
             "height": 1024,
             "elapsed": 8.5,
-            "created_at": "2026-09-22 13:00:00",
+            "created_at": "2099-09-22 13:00:00",
         }
         insert_generation(test_item)
-        history = get_history(limit=10)
+        history = get_history(limit=100)
         found = next((item for item in history if item["id"] == "test_gen_001"), None)
         self.assertIsNotNone(found)
         self.assertEqual(found["prompt"], "a test cute cat in a teacup")
@@ -49,10 +49,10 @@ class TestDatabase(unittest.TestCase):
             "width": 1024,
             "height": 1024,
             "elapsed": 12.3,
-            "created_at": "2026-09-22 13:05:00",
+            "created_at": "2099-09-22 13:05:00",
         }
         insert_generation(test_item)
-        history = get_history(limit=10)
+        history = get_history(limit=100)
         found = next((item for item in history if item["id"] == "test_gen_multi_001"), None)
         self.assertIsNotNone(found)
         self.assertEqual(found["input_image_urls"], ["/outputs/ref_test_1.png", "/outputs/ref_test_2.png"])

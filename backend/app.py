@@ -37,6 +37,7 @@ class GenerateRequest(BaseModel):
     width: Optional[int] = Field(default=1024, ge=0, le=2048, description="图像宽度（0表示根据参考图自适应）")
     height: Optional[int] = Field(default=1024, ge=0, le=2048, description="图像高度（0表示根据参考图自适应）")
     seed: Optional[int] = Field(default=None, description="随机种子，留空或负数表示随机")
+    count: int = Field(default=1, ge=1, le=20, description="生成图像数量（顺序生成，支持提前终止）")
 
 @app.get("/api/status")
 async def get_status():
@@ -63,6 +64,7 @@ async def trigger_generate(req: GenerateRequest):
             width=req.width,
             height=req.height,
             seed=req.seed,
+            count=req.count,
         )
     )
 
