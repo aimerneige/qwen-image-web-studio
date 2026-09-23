@@ -112,6 +112,18 @@ const AUTO_RESOLUTION = { label: '🖼️ 自适应参考图比例 (Auto)', widt
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const [activeTab, setActiveTab] = useState<'studio' | 'batch'>('studio')
+  const [isMobile, setIsMobile] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth <= 840)
+  const [mobileTab, setMobileTab] = useState<'canvas' | 'studio' | 'gallery' | 'batch'>('canvas')
+
+  // 监听移动端视口断点 (< 840px)
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 840px)')
+    const handleMediaChange = (e: MediaQueryListEvent) => {
+      setIsMobile(e.matches)
+    }
+    mql.addEventListener('change', handleMediaChange)
+    return () => mql.removeEventListener('change', handleMediaChange)
+  }, [])
   const [batchStats, setBatchStats] = useState<{ total: number; completed: number; isRunning: boolean }>({
     total: 0,
     completed: 0,
@@ -249,8 +261,13 @@ export default function App() {
       setInputImages([])
     }
 
-    // 4. 关闭弹窗并滚动至顶部
+    // 4. 关闭弹窗并滚动至顶部，移动端自动切换至工坊调参
     setActiveModalImage(null)
+    if (isMobile) {
+      setMobileTab('studio')
+    } else {
+      setActiveTab('studio')
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -274,6 +291,9 @@ export default function App() {
       setResolution(STANDARD_RESOLUTIONS[0])
     }
     setActiveTab('studio')
+    if (isMobile) {
+      setMobileTab('studio')
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -649,6 +669,10 @@ export default function App() {
   const handleGenerate = async () => {
     if (!prompt.trim() || isBusy) return
 
+    if (isMobile) {
+      setMobileTab('canvas')
+    }
+
     setErrorMessage(null)
     setIsBusy(true)
     setProgress({
@@ -737,12 +761,14 @@ export default function App() {
             {isBusy ? (
               <>
                 <Lock size={15} />
-                <span>硬件独占锁：已锁定 (单任务运行中)</span>
+                <span className="lock-badge-text-desktop">硬件独占锁：已锁定 (单任务运行中)</span>
+                <span className="lock-badge-text-mobile">运行中</span>
               </>
             ) : (
               <>
                 <Unlock size={15} />
-                <span>硬件独占锁：空闲 (就绪)</span>
+                <span className="lock-badge-text-desktop">硬件独占锁：空闲 (就绪)</span>
+                <span className="lock-badge-text-mobile">空闲</span>
               </>
             )}
           </div>
@@ -799,10 +825,10 @@ export default function App() {
       {/* Main Content */}
       <main className="main-content">
         {/* Studio Tab View */}
-        <div style={{ display: activeTab === 'studio' ? 'block' : 'none', width: '100%' }}>
+        <div style={{ display: (!isMobile && activeTab === 'studio') || (isMobile && (mobileTab === 'studio' || mobileTab === 'canvas')) ? 'block' : 'none', width: '100%' }}>
           <div className="workspace-grid">
           {/* Left Panel: Prompt & Controls */}
-          <div className="md3-card">
+          <div className={`md3-card ${isMobile && mobileTab !== 'studio' ? 'mobile-view-hidden' : ''}`}>
             <div className="card-header">
               <h2 className="card-title">
                 <Sliders size={20} color="var(--md-sys-color-primary)" />
@@ -1246,10 +1272,49 @@ export default function App() {
               <Layers size={14} />
               <span>已启用 Sequential CPU Offload 与硬件锁，防止并发爆显存</span>
             </div>
+
+            {/* 移动端工坊底部吸顶操作栏 */}
+            {isMobile && mobileTab === 'studio' && (
+              <div className="mobile-sticky-action-bar">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleGenerate}
+                  disabled={isBusy || !prompt.trim() || batchStats.isRunning}
+                  style={{ flex: 1, height: '44px' }}
+                >
+                  {isBusy ? (
+                    <>
+                      <div className="spinner" style={{ width: 18, height: 18 }} />
+                      <span>正在生成 ({progress?.percent || 0}%)...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={18} />
+                      <span>
+                        {count > 1 ? `顺序生成 ${count} 张` : '立即生成'}
+                      </span>
+                    </>
+                  )}
+                </button>
+                {currentResult && (
+                  <button
+                    type="button"
+                    className="md3-chip"
+                    onClick={() => setMobileTab('canvas')}
+                    style={{ height: '44px', padding: '0 14px', flexShrink: 0 }}
+                    title="切换至画布查看结果"
+                  >
+                    <ImageIcon size={16} />
+                    <span>看画布</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right Panel: Output & Preview */}
-          <div className="preview-container">
+          <div className={`preview-container ${isMobile && mobileTab !== 'canvas' ? 'mobile-view-hidden' : ''}`}>
             <div className="preview-header">
               <span style={{ fontWeight: 500, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <ImageIcon size={18} color="var(--md-sys-color-primary)" />
@@ -1376,14 +1441,57 @@ export default function App() {
                 <div className="empty-placeholder">
                   <ImageIcon size={64} strokeWidth={1.2} />
                   <p>输入提示词（或上传参考图）并点击“开始生成”，结果将在此处呈现</p>
+                  {isMobile && (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => setMobileTab('studio')}
+                      style={{ marginTop: '12px' }}
+                    >
+                      <Sliders size={16} />
+                      <span>前往工坊配置提示词</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {/* 移动端画布快速微调与重绘操作栏 */}
+            {isMobile && currentResult && !isBusy && (
+              <div className="mobile-canvas-floating-bar">
+                <div className="mobile-canvas-prompt-snippet">
+                  <span className="mobile-canvas-prompt-label">当前:</span>
+                  <span className="mobile-canvas-prompt-text">{currentResult.prompt}</span>
+                </div>
+                <div className="mobile-canvas-bar-actions">
+                  <button
+                    type="button"
+                    className="md3-chip mobile-canvas-action-chip"
+                    onClick={() => {
+                      handleRemix(currentResult)
+                      setMobileTab('studio')
+                    }}
+                    title="将此图提示词与参数载入工坊微调"
+                  >
+                    <Sliders size={14} /> 调参
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary mobile-canvas-quick-btn"
+                    onClick={handleGenerate}
+                    disabled={isBusy}
+                    title="基于当前提示词再生成一张"
+                  >
+                    <Sparkles size={14} /> 再来一张
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* History Gallery */}
-        {history.length > 0 && (
+        {/* Desktop History Gallery */}
+        {!isMobile && history.length > 0 && (
           <section className="history-section">
             <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Clock size={18} color="var(--md-sys-color-primary)" />
@@ -1433,8 +1541,77 @@ export default function App() {
         )}
         </div>
 
+        {/* Mobile Gallery Tab View */}
+        {isMobile && mobileTab === 'gallery' && (
+          <div style={{ width: '100%' }}>
+            {history.length > 0 ? (
+              <section className="history-section" style={{ marginTop: 0 }}>
+                <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Clock size={18} color="var(--md-sys-color-primary)" />
+                  历史画廊 ({history.length})
+                </h3>
+                <div className="history-grid">
+                  {history.map((item) => (
+                    <div
+                      key={item.id}
+                      className="history-card"
+                      onClick={() => setActiveModalImage(item)}
+                    >
+                      <button
+                        type="button"
+                        className="history-card-delete"
+                        onClick={(e) => handleDeleteHistory(item.id, e)}
+                        title="删除该记录"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                      <div style={{ position: 'relative' }}>
+                        <img src={getAuthorizedUrl(item.url)} alt={item.prompt} className="history-thumb" loading="lazy" />
+                        {item.has_input_image && (
+                          <span
+                            className="reference-badge"
+                            style={{ position: 'absolute', top: 8, right: 8, boxShadow: 'var(--md-sys-elevation-1)' }}
+                          >
+                            {item.input_image_urls && item.input_image_urls.length > 1
+                              ? `多图 (${item.input_image_urls.length})`
+                              : '图生图'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="history-info">
+                        <span className="history-prompt" title={item.prompt}>
+                          {item.prompt}
+                        </span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--md-sys-color-outline)' }}>
+                          <span>{item.created_at || '刚刚'}</span>
+                          {item.elapsed !== undefined && <span>{item.elapsed}s</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : (
+              <div className="empty-placeholder" style={{ padding: '60px 20px', textAlign: 'center' }}>
+                <Clock size={48} strokeWidth={1.5} color="var(--md-sys-color-outline)" />
+                <div style={{ fontSize: '16px', fontWeight: 500, marginTop: 12 }}>暂无历史画廊记录</div>
+                <p style={{ fontSize: '13px', color: 'var(--md-sys-color-outline)' }}>生成的图片会保留在本地历史记录中，供随时查阅与 Remix 复现</p>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setMobileTab('studio')}
+                  style={{ marginTop: 16 }}
+                >
+                  <Sparkles size={16} />
+                  <span>前往工坊创作</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Batch Processing Tab View */}
-        <div style={{ display: activeTab === 'batch' ? 'block' : 'none', width: '100%' }}>
+        <div style={{ display: (!isMobile && activeTab === 'batch') || (isMobile && mobileTab === 'batch') ? 'block' : 'none', width: '100%' }}>
           <BatchProcessing
             isBusy={isBusy}
             isCancelling={isCancelling}
@@ -1452,6 +1629,66 @@ export default function App() {
           />
         </div>
       </main>
+
+      {/* Mobile Bottom Navigation Bar (MD3) */}
+      {isMobile && (
+        <nav className="mobile-bottom-nav">
+          <button
+            type="button"
+            className={`mobile-nav-item ${mobileTab === 'canvas' ? 'active' : ''}`}
+            onClick={() => setMobileTab('canvas')}
+          >
+            <div className="mobile-nav-icon-wrapper">
+              <ImageIcon size={20} />
+              {isBusy && <span className="mobile-nav-busy-dot" />}
+            </div>
+            <span>画布</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-nav-item ${mobileTab === 'studio' ? 'active' : ''}`}
+            onClick={() => setMobileTab('studio')}
+          >
+            <div className="mobile-nav-icon-wrapper">
+              <Sliders size={20} />
+            </div>
+            <span>工坊</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-nav-item ${mobileTab === 'gallery' ? 'active' : ''}`}
+            onClick={() => setMobileTab('gallery')}
+          >
+            <div className="mobile-nav-icon-wrapper">
+              <Clock size={20} />
+              {history.length > 0 && (
+                <span className="mobile-nav-count-badge">
+                  {history.length > 99 ? '99+' : history.length}
+                </span>
+              )}
+            </div>
+            <span>画廊</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-nav-item ${mobileTab === 'batch' ? 'active' : ''}`}
+            onClick={() => setMobileTab('batch')}
+          >
+            <div className="mobile-nav-icon-wrapper">
+              <Layers size={20} />
+              {batchStats.total > 0 && (
+                <span className={`mobile-nav-count-badge ${batchStats.isRunning ? 'pulse' : ''}`}>
+                  {batchStats.isRunning ? `${batchStats.completed}/${batchStats.total}` : batchStats.total}
+                </span>
+              )}
+            </div>
+            <span>批量</span>
+          </button>
+        </nav>
+      )}
 
       {/* Generation Details & Remix Dialog */}
       {activeModalImage && (
