@@ -5,11 +5,18 @@ from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.model_service import model_manager, OUTPUTS_DIR, BASE_DIR
+from backend.auth import (
+    is_auth_required,
+    is_authenticated,
+    verify_token,
+    extract_token_from_request,
+    get_auth_token,
+)
 
 logger = logging.getLogger("qwen_image_api")
 
@@ -27,6 +34,87 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """鉴权中间件：若环境变量设置了 AUTH_TOKEN，则保护 /api/* 与 /outputs/*"""
+    # 1. 服务端未配置 AUTH_TOKEN 时完全开放
+    if not is_auth_required():
+        return await call_next(request)
+
+    # 2. 放行 CORS OPTIONS 预检请求
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+
+    # 3. 放行公开鉴权路由
+    if path in ("/api/auth/config", "/api/auth/verify", "/api/auth/logout"):
+        return await call_next(request)
+
+    # 4. 拦截受保护资源：所有 /api/* 以及 /outputs/*
+    if path == "/api" or path.startswith("/api/") or path == "/outputs" or path.startswith("/outputs/"):
+        if not is_authenticated(request):
+            if path == "/api" or path.startswith("/api/"):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "未授权：请提供有效的访问 Token"},
+                )
+            else:
+                return Response(
+                    status_code=401,
+                    content="Unauthorized: Valid token required",
+                    media_type="text/plain",
+                )
+
+    # 5. 前端静态文件及根路径放行，以便用户加载 UI 输入 Token
+    return await call_next(request)
+
+class VerifyTokenRequest(BaseModel):
+    token: Optional[str] = Field(default=None, description="访问鉴权 Token")
+
+@app.get("/api/auth/config")
+async def get_auth_config(request: Request):
+    """获取鉴权配置及当前请求的有效鉴权状态"""
+    return {
+        "auth_required": is_auth_required(),
+        "authenticated": is_authenticated(request),
+    }
+
+@app.post("/api/auth/verify")
+async def verify_auth_token(response: Response, request: Request, req: Optional[VerifyTokenRequest] = None):
+    """验证用户填写的 Token，并在鉴权成功后写入安全 Session Cookie"""
+    provided_token = None
+    if req and req.token:
+        provided_token = req.token
+    elif request:
+        provided_token = extract_token_from_request(request)
+
+    if not verify_token(provided_token):
+        raise HTTPException(status_code=401, detail="Token 错误或无效，请重新输入")
+
+    if response:
+        response.set_cookie(
+            key="auth_token",
+            value=provided_token or get_auth_token(),
+            httponly=True,
+            samesite="lax",
+            path="/",
+            max_age=30 * 24 * 3600,
+        )
+    return {
+        "success": True,
+        "message": "Token 验证成功",
+    }
+
+@app.post("/api/auth/logout")
+async def auth_logout(response: Response):
+    """清除鉴权 Cookie 并退出登录"""
+    response.delete_cookie(key="auth_token", path="/")
+    return {
+        "success": True,
+        "message": "已清除访问凭证",
+    }
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., description="正向提示词", min_length=1)

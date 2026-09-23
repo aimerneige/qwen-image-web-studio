@@ -1,3 +1,4 @@
+import os
 import unittest
 import io
 import zipfile
@@ -8,6 +9,9 @@ from backend.model_service import OUTPUTS_DIR
 class TestBatchExport(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
+        token = os.environ.get("AUTH_TOKEN")
+        if token:
+            self.client.headers["Authorization"] = f"Bearer {token}"
         # Create a temporary dummy file in OUTPUTS_DIR for export testing
         self.test_filename = "test_export_dummy.png"
         self.test_filepath = OUTPUTS_DIR / self.test_filename

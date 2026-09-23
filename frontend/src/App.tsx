@@ -20,12 +20,23 @@ import {
   UploadCloud,
   Trash2,
   Eye,
+  EyeOff,
   Square,
-  X
+  X,
+  Key,
+  ShieldCheck,
+  AlertCircle
 } from 'lucide-react'
 import './App.css'
 import type { TaskProgress, UploadedImage, ImageResult } from './types'
 import BatchProcessing, { type BatchCallbacks } from './BatchProcessing'
+import {
+  getAuthToken,
+  setAuthToken,
+  clearAuthToken,
+  fetchWithAuth,
+  getAuthorizedUrl,
+} from './auth'
 
 const TEXT_PRESETS = [
   {
@@ -132,25 +143,41 @@ export default function App() {
   const [modalCopied, setModalCopied] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+  // 访问鉴权状态
+  const [authRequired, setAuthRequired] = useState<boolean | null>(null)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false)
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false)
+  const [tokenInput, setTokenInput] = useState<string>(() => getAuthToken())
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authLoading, setAuthLoading] = useState<boolean>(false)
+  const [showTokenText, setShowTokenText] = useState<boolean>(false)
+  const [rememberToken, setRememberToken] = useState<boolean>(true)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const connectSSERef = useRef<(token?: string) => void>(() => {})
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 监听 ESC 键关闭详情弹窗
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && activeModalImage) {
-        setActiveModalImage(null)
+      if (e.key === 'Escape') {
+        if (activeModalImage) {
+          setActiveModalImage(null)
+        } else if (showAuthModal && isAuthenticated) {
+          setShowAuthModal(false)
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeModalImage])
+  }, [activeModalImage, showAuthModal, isAuthenticated])
 
   // 取消正在运行的任务
   const handleCancel = async () => {
     if (!isBusy || isCancelling) return
     setIsCancelling(true)
     try {
-      const res = await fetch('/api/cancel', { method: 'POST' })
+      const res = await fetchWithAuth('/api/cancel', { method: 'POST' })
       if (!res.ok) {
         const err = await res.json()
         setErrorMessage(err.detail || '取消失败')
@@ -320,7 +347,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/history/${id}`, { method: 'DELETE' })
+      const res = await fetchWithAuth(`/api/history/${id}`, { method: 'DELETE' })
       if (res.ok) {
         setHistory((prev) => {
           const updated = prev.filter((item) => item.id !== id)
@@ -362,7 +389,7 @@ export default function App() {
   // 获取初始状态
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/status')
+      const res = await fetchWithAuth('/api/status')
       if (res.ok) {
         const data = await res.json()
         setIsBusy(data.is_busy)
@@ -382,114 +409,241 @@ export default function App() {
   }
 
   // SSE 实时推送与长连接
+  const connectSSE = useCallback((overrideToken?: string) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+
+    const token = overrideToken || getAuthToken()
+    const sseUrl = token ? `/api/stream?token=${encodeURIComponent(token)}` : '/api/stream'
+    const eventSource = new EventSource(sseUrl)
+    eventSourceRef.current = eventSource
+
+    eventSource.addEventListener('status', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        setIsBusy(data.is_busy)
+        if (data.current_task) {
+          setProgress(data.current_task)
+        } else {
+          setIsBusy(false)
+        }
+        if (data.history && data.history.length > 0) {
+          setHistory(data.history)
+          setCurrentResult((prev) => prev || data.history[0])
+        }
+      } catch (err) {
+        console.error('解析 status 事件失败', err)
+      }
+    })
+
+    eventSource.addEventListener('start', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        setIsBusy(true)
+        setProgress(data)
+        setErrorMessage(null)
+      } catch (err) {
+        console.error(err)
+      }
+    })
+
+    eventSource.addEventListener('progress', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        setIsBusy(true)
+        setProgress(data)
+        batchCallbacksRef.current.onProgress?.(data)
+      } catch (err) {
+        console.error(err)
+      }
+    })
+
+    eventSource.addEventListener('complete', (e) => {
+      try {
+        const data: ImageResult = JSON.parse(e.data)
+        setCurrentResult(data)
+        setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
+        batchCallbacksRef.current.onComplete?.(data)
+
+        // 若批次未结束，保持 isBusy 为 true，等待后续图片
+        if (data.is_batch_end !== false && (!data.batch_total || data.batch_index === data.batch_total)) {
+          setIsBusy(false)
+          setIsCancelling(false)
+          setProgress(null)
+        }
+      } catch (err) {
+        console.error(err)
+      }
+    })
+
+    eventSource.addEventListener('cancelled', (e: any) => {
+      setIsBusy(false)
+      setIsCancelling(false)
+      setProgress(null)
+      batchCallbacksRef.current.onCancelled?.()
+      let cancelMsg = '任务已提前终止并释放 GPU 硬件锁'
+      if (e.data) {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.message) cancelMsg = data.message
+        } catch {}
+      }
+      setErrorMessage(cancelMsg)
+      setTimeout(() => setErrorMessage(null), 5000)
+    })
+
+    eventSource.addEventListener('error', (e: any) => {
+      let errMsg = '生成失败'
+      if (e.data) {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.message) errMsg = data.message
+          setErrorMessage(errMsg)
+        } catch {}
+      }
+      setIsBusy(false)
+      setIsCancelling(false)
+      batchCallbacksRef.current.onError?.(errMsg)
+    })
+
+    eventSource.onerror = () => {
+      eventSource?.close()
+      if (authRequired && !isAuthenticated) return
+      setTimeout(() => {
+        if (!authRequired || isAuthenticated) {
+          connectSSERef.current()
+        }
+      }, 3000)
+    }
+  }, [authRequired, isAuthenticated])
+
   useEffect(() => {
-    fetchStatus()
+    connectSSERef.current = connectSSE
+  }, [connectSSE])
 
-    let eventSource: EventSource | null = null
+  // 验证用户输入的 Token
+  const handleVerifyToken = useCallback(async (candidateToken?: string) => {
+    const tokenToTest = candidateToken !== undefined ? candidateToken : tokenInput
+    if (!tokenToTest.trim()) {
+      setAuthError('请输入访问 Token')
+      return
+    }
 
-    const connectSSE = () => {
-      eventSource = new EventSource('/api/stream')
+    setAuthLoading(true)
+    setAuthError(null)
 
-      eventSource.addEventListener('status', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          setIsBusy(data.is_busy)
-          if (data.current_task) {
-            setProgress(data.current_task)
+    try {
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenToTest.trim()}`,
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ token: tokenToTest.trim() }),
+      })
+
+      if (res.ok) {
+        if (rememberToken) {
+          setAuthToken(tokenToTest.trim())
+        }
+        setIsAuthenticated(true)
+        setShowAuthModal(false)
+        setAuthError(null)
+        fetchStatus()
+        connectSSE(tokenToTest.trim())
+      } else {
+        const err = await res.json().catch(() => ({}))
+        setAuthError(err.detail || 'Token 验证失败，请核对环境变量')
+      }
+    } catch (e: any) {
+      setAuthError(e.message || '网络连接异常')
+    } finally {
+      setAuthLoading(false)
+    }
+  }, [tokenInput, rememberToken, connectSSE])
+
+  // 退出登录 / 清除凭据
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
+    } catch {}
+    clearAuthToken()
+    setTokenInput('')
+    setIsAuthenticated(false)
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    setShowAuthModal(true)
+  }, [])
+
+  // 服务端鉴权配置探测及全局鉴权生命周期
+  useEffect(() => {
+    let isMounted = true
+
+    const checkAuthConfig = async () => {
+      const savedToken = getAuthToken()
+      try {
+        const res = await fetch('/api/auth/config', {
+          headers: savedToken ? { Authorization: `Bearer ${savedToken}` } : {},
+          credentials: 'same-origin',
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (!isMounted) return
+          setAuthRequired(data.auth_required)
+
+          if (!data.auth_required) {
+            setIsAuthenticated(true)
+            fetchStatus()
+            connectSSE()
+          } else if (data.authenticated) {
+            setIsAuthenticated(true)
+            fetchStatus()
+            connectSSE(savedToken)
+          } else if (savedToken) {
+            handleVerifyToken(savedToken)
           } else {
-            setIsBusy(false)
+            setIsAuthenticated(false)
+            setShowAuthModal(true)
           }
-          if (data.history && data.history.length > 0) {
-            setHistory(data.history)
-            setCurrentResult((prev) => prev || data.history[0])
-          }
-        } catch (err) {
-          console.error('解析 status 事件失败', err)
+        } else {
+          fetchStatus()
+          connectSSE()
         }
-      })
-
-      eventSource.addEventListener('start', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          setIsBusy(true)
-          setProgress(data)
-          setErrorMessage(null)
-        } catch (err) {
-          console.error(err)
-        }
-      })
-
-      eventSource.addEventListener('progress', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          setIsBusy(true)
-          setProgress(data)
-          batchCallbacksRef.current.onProgress?.(data)
-        } catch (err) {
-          console.error(err)
-        }
-      })
-
-      eventSource.addEventListener('complete', (e) => {
-        try {
-          const data: ImageResult = JSON.parse(e.data)
-          setCurrentResult(data)
-          setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
-          batchCallbacksRef.current.onComplete?.(data)
-
-          // 若批次未结束，保持 isBusy 为 true，等待后续图片
-          if (data.is_batch_end !== false && (!data.batch_total || data.batch_index === data.batch_total)) {
-            setIsBusy(false)
-            setIsCancelling(false)
-            setProgress(null)
-          }
-        } catch (err) {
-          console.error(err)
-        }
-      })
-
-      eventSource.addEventListener('cancelled', (e: any) => {
-        setIsBusy(false)
-        setIsCancelling(false)
-        setProgress(null)
-        batchCallbacksRef.current.onCancelled?.()
-        let cancelMsg = '任务已提前终止并释放 GPU 硬件锁'
-        if (e.data) {
-          try {
-            const data = JSON.parse(e.data)
-            if (data.message) cancelMsg = data.message
-          } catch {}
-        }
-        setErrorMessage(cancelMsg)
-        setTimeout(() => setErrorMessage(null), 5000)
-      })
-
-      eventSource.addEventListener('error', (e: any) => {
-        let errMsg = '生成失败'
-        if (e.data) {
-          try {
-            const data = JSON.parse(e.data)
-            if (data.message) errMsg = data.message
-            setErrorMessage(errMsg)
-          } catch {}
-        }
-        setIsBusy(false)
-        setIsCancelling(false)
-        batchCallbacksRef.current.onError?.(errMsg)
-      })
-
-      eventSource.onerror = () => {
-        eventSource?.close()
-        setTimeout(connectSSE, 3000)
+      } catch (err) {
+        console.warn('获取鉴权状态失败:', err)
+        fetchStatus()
+        connectSSE()
       }
     }
 
-    connectSSE()
+    checkAuthConfig()
+
+    const handleUnauthorized = () => {
+      setIsAuthenticated(false)
+      setShowAuthModal(true)
+      setAuthError('访问凭证已失效或未授权，请重新输入 Token')
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized)
 
     return () => {
-      eventSource?.close()
+      isMounted = false
+      window.removeEventListener('auth:unauthorized', handleUnauthorized)
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
     }
-  }, [])
+  }, [connectSSE])
 
   // 提交生成
   const handleGenerate = async () => {
@@ -508,7 +662,7 @@ export default function App() {
     })
 
     try {
-      const res = await fetch('/api/generate', {
+      const res = await fetchWithAuth('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -592,6 +746,45 @@ export default function App() {
               </>
             )}
           </div>
+
+          {/* 鉴权状态指示及管理按钮 */}
+          {authRequired && (
+            <button
+              className="icon-button"
+              onClick={() => {
+                setAuthError(null)
+                setShowAuthModal(true)
+              }}
+              title={isAuthenticated ? '访问已授权 (点击管理或退出)' : '未授权 (点击输入 Token)'}
+              style={{
+                width: 'auto',
+                padding: '0 12px',
+                gap: '6px',
+                borderRadius: 'var(--md-sys-shape-full)',
+                backgroundColor: isAuthenticated
+                  ? 'var(--md-sys-color-surface-container-high)'
+                  : 'var(--md-sys-color-error-container)',
+                color: isAuthenticated
+                  ? 'var(--md-sys-color-on-surface)'
+                  : 'var(--md-sys-color-on-error-container)',
+                border: '1px solid ' + (isAuthenticated ? 'var(--md-sys-color-outline-variant)' : 'var(--md-sys-color-error)'),
+                fontSize: '12px',
+                fontWeight: 500,
+              }}
+            >
+              {isAuthenticated ? (
+                <>
+                  <ShieldCheck size={16} color="var(--md-sys-color-primary)" />
+                  <span>已鉴权</span>
+                </>
+              ) : (
+                <>
+                  <Key size={16} color="var(--md-sys-color-error)" />
+                  <span>输入 Token</span>
+                </>
+              )}
+            </button>
+          )}
 
           <button
             className="icon-button"
@@ -1081,7 +1274,7 @@ export default function App() {
                     {copied ? <Check size={18} color="var(--md-sys-color-success)" /> : <Copy size={18} />}
                   </button>
                   <a
-                    href={currentResult.url}
+                    href={getAuthorizedUrl(currentResult.url)}
                     download={currentResult.filename}
                     className="icon-button"
                     title="下载原始图片"
@@ -1143,7 +1336,7 @@ export default function App() {
                           最终生成结果
                         </div>
                         <img
-                          src={currentResult.url}
+                          src={getAuthorizedUrl(currentResult.url)}
                           alt={currentResult.prompt}
                           className="display-image"
                           style={{ maxHeight: 380 }}
@@ -1153,7 +1346,7 @@ export default function App() {
                     </div>
                   ) : (
                     <img
-                      src={currentResult.url}
+                      src={getAuthorizedUrl(currentResult.url)}
                       alt={currentResult.prompt}
                       className="display-image"
                       onClick={() => setActiveModalImage(currentResult)}
@@ -1212,7 +1405,7 @@ export default function App() {
                     <Trash2 size={13} />
                   </button>
                   <div style={{ position: 'relative' }}>
-                    <img src={item.url} alt={item.prompt} className="history-thumb" loading="lazy" />
+                    <img src={getAuthorizedUrl(item.url)} alt={item.prompt} className="history-thumb" loading="lazy" />
                     {item.has_input_image && (
                       <span
                         className="reference-badge"
@@ -1293,7 +1486,7 @@ export default function App() {
             <div className="modal-body">
               <div className="modal-image-pane">
                 <img
-                  src={activeModalImage.url}
+                  src={getAuthorizedUrl(activeModalImage.url)}
                   alt={activeModalImage.prompt}
                   className="modal-main-image"
                 />
@@ -1450,7 +1643,7 @@ export default function App() {
                   <Trash2 size={14} /> 删除记录
                 </button>
                 <a
-                  href={activeModalImage.url}
+                  href={getAuthorizedUrl(activeModalImage.url)}
                   download={activeModalImage.filename}
                   className="md3-chip"
                   style={{ textDecoration: 'none' }}
@@ -1471,6 +1664,157 @@ export default function App() {
                   <span>
                     {activeModalImage.has_input_image ? 'Remix 到工作区 (含参考图)' : 'Remix 到工作区'}
                   </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 访问鉴权弹窗 */}
+      {showAuthModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            if (isAuthenticated) {
+              setShowAuthModal(false)
+            }
+          }}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: 440 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="modal-title-group">
+                <Key size={20} color="var(--md-sys-color-primary)" />
+                <h3 className="modal-title">访问鉴权验证</h3>
+              </div>
+              {isAuthenticated && (
+                <button
+                  className="icon-button"
+                  onClick={() => setShowAuthModal(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              )}
+            </div>
+
+            <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <p style={{ margin: 0, fontSize: '14px', color: 'var(--md-sys-color-on-surface-variant)', lineHeight: 1.5 }}>
+                服务端已开启安全访问控制。请输入环境变量中配置的访问 Token 以使用图像生成服务。
+              </p>
+
+              <div className="field-group" style={{ margin: 0 }}>
+                <div className="field-label" style={{ fontSize: '13px', fontWeight: 500 }}>
+                  <span>访问凭证 (Token)</span>
+                </div>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <input
+                    type={showTokenText ? 'text' : 'password'}
+                    className="md3-input"
+                    placeholder="输入 AUTH_TOKEN"
+                    value={tokenInput}
+                    onChange={(e) => {
+                      setTokenInput(e.target.value)
+                      setAuthError(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleVerifyToken()
+                      }
+                    }}
+                    autoFocus
+                    style={{ width: '100%', paddingRight: '44px', height: '44px', boxSizing: 'border-box' }}
+                  />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => setShowTokenText(!showTokenText)}
+                    style={{ position: 'absolute', right: 4, width: 34, height: 34 }}
+                    title={showTokenText ? '隐藏明文' : '显示明文'}
+                  >
+                    {showTokenText ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              {authError && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '10px 14px',
+                    borderRadius: 'var(--md-sys-shape-m)',
+                    backgroundColor: 'var(--md-sys-color-error-container)',
+                    color: 'var(--md-sys-color-on-error-container)',
+                    fontSize: '13px',
+                  }}
+                >
+                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                  <span>{authError}</span>
+                </div>
+              )}
+
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '13px',
+                  color: 'var(--md-sys-color-on-surface-variant)',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={rememberToken}
+                  onChange={(e) => setRememberToken(e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                <span>在当前浏览器记住该 Token</span>
+              </label>
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                {isAuthenticated && (
+                  <button
+                    type="button"
+                    className="md3-chip"
+                    onClick={handleLogout}
+                    style={{
+                      height: '42px',
+                      padding: '0 16px',
+                      color: 'var(--md-sys-color-error)',
+                      borderColor: 'var(--md-sys-color-error)',
+                      cursor: 'pointer',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    退出登录
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => handleVerifyToken()}
+                  disabled={authLoading || !tokenInput.trim()}
+                  style={{ height: '42px', flex: 1 }}
+                >
+                  {authLoading ? (
+                    <>
+                      <div className="spinner" style={{ width: 18, height: 18 }} />
+                      <span>正在验证...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock size={16} />
+                      <span>{isAuthenticated ? '更新凭证' : '验证并访问'}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

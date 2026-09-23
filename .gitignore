@@ -15,3 +15,9 @@ outputs/
 # Databases
 *.db
 *.sqlite3
+
+# Environment variables
+.env
+.env.*
+!.env.example
+

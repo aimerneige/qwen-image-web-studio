@@ -21,6 +21,7 @@ import {
   Cpu
 } from 'lucide-react'
 import type { TaskProgress, ImageResult, Resolution, BatchItem } from './types'
+import { fetchWithAuth, getAuthorizedUrl } from './auth'
 
 export interface BatchCallbacks {
   onProgress?: (progress: TaskProgress) => void
@@ -227,7 +228,7 @@ export default function BatchProcessing({
 
     // 3. Post to API
     try {
-      const res = await fetch('/api/generate', {
+      const res = await fetchWithAuth('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -398,7 +399,7 @@ export default function BatchProcessing({
 
     if (isBusy) {
       try {
-        await fetch('/api/cancel', { method: 'POST' })
+        await fetchWithAuth('/api/cancel', { method: 'POST' })
       } catch {}
     }
 
@@ -497,7 +498,7 @@ export default function BatchProcessing({
         }),
       }
 
-      const res = await fetch('/api/batch-export', {
+      const res = await fetchWithAuth('/api/batch-export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1101,7 +1102,7 @@ export default function BatchProcessing({
                       {item.status === 'completed' && item.result ? (
                         <>
                           <img
-                            src={item.result.url}
+                            src={getAuthorizedUrl(item.result.url)}
                             alt={`生成结果: ${item.name}`}
                             className="batch-img-thumb result"
                           />
@@ -1169,7 +1170,7 @@ export default function BatchProcessing({
                             <Eye size={13} />
                           </button>
                           <a
-                            href={item.result.url}
+                            href={getAuthorizedUrl(item.result.url)}
                             download={`${item.name.replace(/\.[^/.]+$/, "")}_qwen.png`}
                             className="batch-mini-action-btn"
                             onClick={(e) => e.stopPropagation()}
@@ -1240,7 +1241,7 @@ export default function BatchProcessing({
                 <div className="batch-compare-card">
                   <div className="batch-compare-label success">生成结果 (Qwen-Image)</div>
                   <img
-                    src={activeModalItem.result.url}
+                    src={getAuthorizedUrl(activeModalItem.result.url)}
                     alt={activeModalItem.result.prompt}
                     className="batch-compare-img"
                   />
@@ -1321,7 +1322,7 @@ export default function BatchProcessing({
             <div className="modal-footer">
               <div className="modal-footer-actions-left">
                 <a
-                  href={activeModalItem.result.url}
+                  href={getAuthorizedUrl(activeModalItem.result.url)}
                   download={`${activeModalItem.name.replace(/\.[^/.]+$/, "")}_qwen.png`}
                   className="md3-chip"
                   style={{ textDecoration: 'none' }}
