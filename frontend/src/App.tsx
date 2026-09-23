@@ -113,7 +113,7 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
   const [activeTab, setActiveTab] = useState<'studio' | 'batch'>('studio')
   const [isMobile, setIsMobile] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth <= 840)
-  const [mobileTab, setMobileTab] = useState<'canvas' | 'studio' | 'gallery' | 'batch'>('canvas')
+  const [mobileTab, setMobileTab] = useState<'studio' | 'gallery' | 'batch'>('studio')
 
   // 监听移动端视口断点 (< 840px)
   useEffect(() => {
@@ -670,7 +670,7 @@ export default function App() {
     if (!prompt.trim() || isBusy) return
 
     if (isMobile) {
-      setMobileTab('canvas')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     }
 
     setErrorMessage(null)
@@ -825,10 +825,10 @@ export default function App() {
       {/* Main Content */}
       <main className="main-content">
         {/* Studio Tab View */}
-        <div style={{ display: (!isMobile && activeTab === 'studio') || (isMobile && (mobileTab === 'studio' || mobileTab === 'canvas')) ? 'block' : 'none', width: '100%' }}>
+        <div style={{ display: (!isMobile && activeTab === 'studio') || (isMobile && mobileTab === 'studio') ? 'block' : 'none', width: '100%' }}>
           <div className="workspace-grid">
-          {/* Left Panel: Prompt & Controls */}
-          <div className={`md3-card ${isMobile && mobileTab !== 'studio' ? 'mobile-view-hidden' : ''}`}>
+          {/* Controls Panel */}
+          <div className="md3-card controls-card">
             <div className="card-header">
               <h2 className="card-title">
                 <Sliders size={20} color="var(--md-sys-color-primary)" />
@@ -1274,7 +1274,7 @@ export default function App() {
             </div>
 
             {/* 移动端工坊底部吸顶操作栏 */}
-            {isMobile && mobileTab === 'studio' && (
+            {isMobile && (
               <div className="mobile-sticky-action-bar">
                 <button
                   type="button"
@@ -1301,20 +1301,20 @@ export default function App() {
                   <button
                     type="button"
                     className="md3-chip"
-                    onClick={() => setMobileTab('canvas')}
+                    onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                     style={{ height: '44px', padding: '0 14px', flexShrink: 0 }}
-                    title="切换至画布查看结果"
+                    title="置顶查看最近生成的画面"
                   >
                     <ImageIcon size={16} />
-                    <span>看画布</span>
+                    <span>看画面</span>
                   </button>
                 )}
               </div>
             )}
           </div>
 
-          {/* Right Panel: Output & Preview */}
-          <div className={`preview-container ${isMobile && mobileTab !== 'canvas' ? 'mobile-view-hidden' : ''}`}>
+          {/* Canvas Card */}
+          <div className="preview-container canvas-card">
             <div className="preview-header">
               <span style={{ fontWeight: 500, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <ImageIcon size={18} color="var(--md-sys-color-primary)" />
@@ -1438,55 +1438,14 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <div className="empty-placeholder">
-                  <ImageIcon size={64} strokeWidth={1.2} />
-                  <p>输入提示词（或上传参考图）并点击“开始生成”，结果将在此处呈现</p>
-                  {isMobile && (
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => setMobileTab('studio')}
-                      style={{ marginTop: '12px' }}
-                    >
-                      <Sliders size={16} />
-                      <span>前往工坊配置提示词</span>
-                    </button>
-                  )}
+                <div className="empty-placeholder" style={{ padding: '28px 16px', minHeight: 'auto' }}>
+                  <ImageIcon size={44} strokeWidth={1.2} />
+                  <p style={{ marginTop: '8px', fontSize: '13px' }}>
+                    在下方输入提示词并点击“开始生成”，结果画面将在此处呈现
+                  </p>
                 </div>
               )}
             </div>
-
-            {/* 移动端画布快速微调与重绘操作栏 */}
-            {isMobile && currentResult && !isBusy && (
-              <div className="mobile-canvas-floating-bar">
-                <div className="mobile-canvas-prompt-snippet">
-                  <span className="mobile-canvas-prompt-label">当前:</span>
-                  <span className="mobile-canvas-prompt-text">{currentResult.prompt}</span>
-                </div>
-                <div className="mobile-canvas-bar-actions">
-                  <button
-                    type="button"
-                    className="md3-chip mobile-canvas-action-chip"
-                    onClick={() => {
-                      handleRemix(currentResult)
-                      setMobileTab('studio')
-                    }}
-                    title="将此图提示词与参数载入工坊微调"
-                  >
-                    <Sliders size={14} /> 调参
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary mobile-canvas-quick-btn"
-                    onClick={handleGenerate}
-                    disabled={isBusy}
-                    title="基于当前提示词再生成一张"
-                  >
-                    <Sparkles size={14} /> 再来一张
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
@@ -1635,23 +1594,12 @@ export default function App() {
         <nav className="mobile-bottom-nav">
           <button
             type="button"
-            className={`mobile-nav-item ${mobileTab === 'canvas' ? 'active' : ''}`}
-            onClick={() => setMobileTab('canvas')}
-          >
-            <div className="mobile-nav-icon-wrapper">
-              <ImageIcon size={20} />
-              {isBusy && <span className="mobile-nav-busy-dot" />}
-            </div>
-            <span>画布</span>
-          </button>
-
-          <button
-            type="button"
             className={`mobile-nav-item ${mobileTab === 'studio' ? 'active' : ''}`}
             onClick={() => setMobileTab('studio')}
           >
             <div className="mobile-nav-icon-wrapper">
-              <Sliders size={20} />
+              <Sparkles size={20} />
+              {isBusy && <span className="mobile-nav-busy-dot" />}
             </div>
             <span>工坊</span>
           </button>
