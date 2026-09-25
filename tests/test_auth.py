@@ -142,6 +142,23 @@ class TestAuth(unittest.TestCase):
             self.assertIn("total_pages", data)
             self.assertEqual(data["page"], 1)
             self.assertEqual(data["page_size"], 10)
+    def test_sse_stream_graceful_shutdown(self):
+        import asyncio
+        from backend.model_service import model_manager
+
+        async def run_test():
+            q = model_manager.subscribe()
+            try:
+                self.assertIn(q, model_manager._subscribers)
+                model_manager.broadcast_shutdown()
+                self.assertTrue(model_manager.is_shutting_down)
+                msg = q.get_nowait()
+                self.assertEqual(msg.get("event"), "close")
+            finally:
+                model_manager.unsubscribe(q)
+                model_manager.is_shutting_down = False
+
+        asyncio.run(run_test())
 
 if __name__ == "__main__":
     unittest.main()

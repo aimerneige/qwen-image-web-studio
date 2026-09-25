@@ -73,7 +73,17 @@ class ModelManager:
         self._cancel_requested: bool = False
         self.current_task: Optional[Dict[str, Any]] = None
         self._subscribers: List[asyncio.Queue] = []
+        self.is_shutting_down: bool = False
         init_db()  # 初始化 SQLite 表结构（若初次运行且有示例图，植入真实提示词 demo）
+
+    def broadcast_shutdown(self):
+        """通知所有活跃的 SSE 连接立即关闭，释放 HTTP 连接"""
+        self.is_shutting_down = True
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait({"event": "close", "data": {"message": "Server shutting down"}})
+            except Exception:
+                pass
 
     @property
     def history(self) -> List[Dict[str, Any]]:

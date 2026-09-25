@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Request, Response, Query
@@ -20,10 +22,17 @@ from backend.auth import (
 
 logger = logging.getLogger("qwen_image_api")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # 优雅关闭：通知所有挂起的 SSE 长连接立即断开
+    model_manager.broadcast_shutdown()
+
 app = FastAPI(
     title="Qwen-Image 2.1 Studio",
     description="Material Design 3 Web UI for Qwen-Image 2.1 with Hardware Lock and Sequential Offload",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS 支持前端开发调试
@@ -35,40 +44,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    """鉴权中间件：若环境变量设置了 AUTH_TOKEN，则保护 /api/* 与 /outputs/*"""
-    # 1. 服务端未配置 AUTH_TOKEN 时完全开放
-    if not is_auth_required():
-        return await call_next(request)
+class AuthMiddleware:
+    """纯 ASGI 鉴权中间件：避免 BaseHTTPMiddleware 与流式响应在关闭时产生 CancelledError 异常"""
+    def __init__(self, app):
+        self.app = app
 
-    # 2. 放行 CORS OPTIONS 预检请求
-    if request.method == "OPTIONS":
-        return await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
 
-    path = request.url.path
+        # 1. 服务端未配置 AUTH_TOKEN 时完全开放
+        if not is_auth_required():
+            return await self.app(scope, receive, send)
 
-    # 3. 放行公开鉴权路由
-    if path in ("/api/auth/config", "/api/auth/verify", "/api/auth/logout"):
-        return await call_next(request)
+        # 2. 放行 CORS OPTIONS 预检请求
+        if scope.get("method") == "OPTIONS":
+            return await self.app(scope, receive, send)
 
-    # 4. 拦截受保护资源：所有 /api/* 以及 /outputs/*
-    if path == "/api" or path.startswith("/api/") or path == "/outputs" or path.startswith("/outputs/"):
-        if not is_authenticated(request):
-            if path == "/api" or path.startswith("/api/"):
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "未授权：请提供有效的访问 Token"},
-                )
-            else:
-                return Response(
-                    status_code=401,
-                    content="Unauthorized: Valid token required",
-                    media_type="text/plain",
-                )
+        path = scope.get("path", "")
 
-    # 5. 前端静态文件及根路径放行，以便用户加载 UI 输入 Token
-    return await call_next(request)
+        # 3. 放行公开鉴权路由
+        if path in ("/api/auth/config", "/api/auth/verify", "/api/auth/logout"):
+            return await self.app(scope, receive, send)
+
+        # 4. 拦截受保护资源：所有 /api/* 以及 /outputs/*
+        if path == "/api" or path.startswith("/api/") or path == "/outputs" or path.startswith("/outputs/"):
+            request = Request(scope)
+            if not is_authenticated(request):
+                if path == "/api" or path.startswith("/api/"):
+                    response = JSONResponse(
+                        status_code=401,
+                        content={"detail": "未授权：请提供有效的访问 Token"},
+                    )
+                else:
+                    response = Response(
+                        status_code=401,
+                        content="Unauthorized: Valid token required",
+                        media_type="text/plain",
+                    )
+                return await response(scope, receive, send)
+
+        # 5. 前端静态文件及根路径放行，以便用户加载 UI 输入 Token
+        return await self.app(scope, receive, send)
+
+app.add_middleware(AuthMiddleware)
 
 class VerifyTokenRequest(BaseModel):
     token: Optional[str] = Field(default=None, description="访问鉴权 Token")
@@ -178,26 +197,33 @@ async def event_stream(request: Request):
     queue = model_manager.subscribe()
 
     async def event_generator():
+        last_ping = time.time()
         try:
             # 初始推送一次当前状态
             initial_status = model_manager.get_status()
             yield f"event: status\ndata: {json.dumps(initial_status, ensure_ascii=False)}\n\n"
 
-            while True:
+            while not model_manager.is_shutting_down:
                 # 检查客户端是否断开
                 if await request.is_disconnected():
                     break
 
                 try:
-                    # 等待新消息，设置超时保活心跳 (Keep-Alive)
-                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    # 等待新消息，设置 1.0 秒超时以感知服务端关闭信号
+                    msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    if msg.get("event") == "close" or model_manager.is_shutting_down:
+                        break
                     event_type = msg.get("event", "message")
                     event_data = json.dumps(msg.get("data", {}), ensure_ascii=False)
                     yield f"event: {event_type}\ndata: {event_data}\n\n"
                 except asyncio.TimeoutError:
-                    # 心跳包
-                    yield ": ping\n\n"
-        except asyncio.CancelledError:
+                    if model_manager.is_shutting_down:
+                        break
+                    now = time.time()
+                    if now - last_ping >= 15.0:
+                        yield ": ping\n\n"
+                        last_ping = now
+        except (asyncio.CancelledError, GeneratorExit):
             pass
         finally:
             model_manager.unsubscribe(queue)
