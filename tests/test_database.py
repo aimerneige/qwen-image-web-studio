@@ -1,5 +1,5 @@
 import unittest
-from backend.database import init_db, insert_generation, get_history, delete_generation
+from backend.database import init_db, insert_generation, get_history, delete_generation, get_history_count
 
 class TestDatabase(unittest.TestCase):
     def setUp(self):
@@ -117,6 +117,45 @@ class TestDatabase(unittest.TestCase):
         # 删除 gen2，不再有任何记录引用该参考图，文件应被安全清理
         delete_generation("test_share_002")
         self.assertFalse(ref_file.exists())
+
+    def test_get_history_count_and_pagination(self):
+        initial_count = get_history_count()
+        self.assertGreaterEqual(initial_count, 0)
+
+        # 插入两条测试数据
+        item1 = {
+            "id": "test_page_001",
+            "filename": "test_page_001.png",
+            "url": "/outputs/test_page_001.png",
+            "prompt": "page test prompt 1",
+            "created_at": "2099-09-22 15:00:00",
+        }
+        item2 = {
+            "id": "test_page_002",
+            "filename": "test_page_002.png",
+            "url": "/outputs/test_page_002.png",
+            "prompt": "page test prompt 2",
+            "created_at": "2099-09-22 15:01:00",
+        }
+        insert_generation(item1)
+        insert_generation(item2)
+
+        new_count = get_history_count()
+        self.assertEqual(new_count, initial_count + 2)
+
+        # 测试分页获取
+        page1 = get_history(limit=1, offset=0)
+        self.assertEqual(len(page1), 1)
+        self.assertEqual(page1[0]["id"], "test_page_002")
+
+        page2 = get_history(limit=1, offset=1)
+        self.assertEqual(len(page2), 1)
+        self.assertEqual(page2[0]["id"], "test_page_001")
+
+        # 清理
+        delete_generation("test_page_001")
+        delete_generation("test_page_002")
+        self.assertEqual(get_history_count(), initial_count)
 
 if __name__ == "__main__":
     unittest.main()

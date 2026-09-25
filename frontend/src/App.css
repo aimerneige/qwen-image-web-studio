@@ -834,6 +834,123 @@
   color: var(--md-sys-color-on-surface-variant);
 }
 
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-grid.loading {
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+/* Pagination Bar */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 18px;
+  background-color: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-l);
+}
+
+.pagination-summary {
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface-variant);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagination-highlight {
+  font-weight: 600;
+  color: var(--md-sys-color-primary);
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pagination-numbers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagination-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--md-sys-shape-s);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background-color: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background-color: var(--md-sys-color-surface-container-high);
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-primary);
+}
+
+.pagination-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--md-sys-color-outline-variant);
+}
+
+.pagination-btn.active {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border-color: var(--md-sys-color-primary);
+  font-weight: 600;
+}
+
+.pagination-ellipsis {
+  padding: 0 4px;
+  color: var(--md-sys-color-outline);
+  font-size: 13px;
+  user-select: none;
+}
+
+.pagination-size-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pagination-select {
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--md-sys-color-on-surface);
+  background-color: var(--md-sys-color-surface-container-low);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-s);
+  outline: none;
+  cursor: pointer;
+}
+
+.pagination-select:focus {
+  border-color: var(--md-sys-color-primary);
+}
+
 /* Modal Dialog */
 .modal-overlay {
   position: fixed;
@@ -1928,6 +2045,22 @@
   .history-prompt {
     font-size: 12px;
     -webkit-line-clamp: 2;
+  }
+
+  .pagination-bar {
+    flex-direction: column;
+    align-items: center;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .pagination-numbers {
+    display: none;
+  }
+
+  .pagination-summary {
+    font-size: 12px;
+    text-align: center;
   }
 }
 

@@ -120,6 +120,14 @@ def insert_generation(data: Dict[str, Any]):
         conn.commit()
         logger.info(f"已将生成记录持久化至 SQLite: id={data.get('id')}, prompt='{data.get('prompt')[:30]}...'")
 
+def get_history_count() -> int:
+    """从数据库中获取有效历史记录总数"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM generations WHERE prompt IS NOT NULL AND TRIM(prompt) != ''")
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
 def get_history(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     """从数据库中按生成时间倒序获取历史记录（纯净数据，只返回包含有效 prompt 的记录）"""
     import json

@@ -130,5 +130,18 @@ class TestAuth(unittest.TestCase):
             res = self.client.get("/api/status")
             self.assertEqual(res.status_code, 200)
 
+    def test_history_pagination_api(self):
+        with patch.dict(os.environ, {"AUTH_TOKEN": ""}):
+            res = self.client.get("/api/history?page=1&page_size=10")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertIn("history", data)
+            self.assertIn("total", data)
+            self.assertIn("page", data)
+            self.assertIn("page_size", data)
+            self.assertIn("total_pages", data)
+            self.assertEqual(data["page"], 1)
+            self.assertEqual(data["page_size"], 10)
+
 if __name__ == "__main__":
     unittest.main()

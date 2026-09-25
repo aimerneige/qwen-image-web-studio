@@ -3,7 +3,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -213,8 +213,23 @@ async def event_stream(request: Request):
     )
 
 @app.get("/api/history")
-async def get_history():
-    return {"history": model_manager.history}
+async def get_history_api(
+    page: int = Query(default=1, ge=1, description="当前页码"),
+    page_size: int = Query(default=24, ge=1, le=100, description="每页记录数"),
+):
+    """分页获取历史生成记录"""
+    from backend.database import get_history, get_history_count
+    total = get_history_count()
+    offset = (page - 1) * page_size
+    items = get_history(limit=page_size, offset=offset)
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    return {
+        "history": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
 
 @app.delete("/api/history/{item_id}")
 async def delete_history_item(item_id: str):

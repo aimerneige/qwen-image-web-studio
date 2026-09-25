@@ -10,6 +10,10 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Image as ImageIcon,
   Sliders,
   Maximize2,
@@ -28,7 +32,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import './App.css'
-import type { TaskProgress, UploadedImage, ImageResult } from './types'
+import type { TaskProgress, UploadedImage, ImageResult, HistoryResponse } from './types'
 import BatchProcessing, { type BatchCallbacks } from './BatchProcessing'
 import {
   getAuthToken,
@@ -134,7 +138,7 @@ export default function App() {
     batchCallbacksRef.current = callbacks
   }, [])
 
-  const [prompt, setPrompt] = useState('1girl, Kousaka Honoka, school uniform, chibi, transparent background, highly detailed')
+  const [prompt, setPrompt] = useState('')
   const [negativePrompt, setNegativePrompt] = useState('')
   const [inputImages, setInputImages] = useState<UploadedImage[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -150,6 +154,11 @@ export default function App() {
   const [progress, setProgress] = useState<TaskProgress | null>(null)
   const [currentResult, setCurrentResult] = useState<ImageResult | null>(null)
   const [history, setHistory] = useState<ImageResult[]>([])
+  const [historyTotal, setHistoryTotal] = useState<number>(0)
+  const [historyPage, setHistoryPage] = useState<number>(1)
+  const [historyPageSize, setHistoryPageSize] = useState<number>(24)
+  const [historyTotalPages, setHistoryTotalPages] = useState<number>(1)
+  const [historyLoading, setHistoryLoading] = useState<boolean>(false)
   const [activeModalImage, setActiveModalImage] = useState<ImageResult | null>(null)
   const [copied, setCopied] = useState(false)
   const [modalCopied, setModalCopied] = useState(false)
@@ -327,13 +336,6 @@ export default function App() {
           return updated
         })
         setResolution(AUTO_RESOLUTION)
-        if (prompt.includes('Kousaka Honoka')) {
-          if (newImages.length > 1 || inputImages.length > 0) {
-            setPrompt(MULTI_IMAGE_PRESETS[0].prompt)
-          } else {
-            setPrompt(IMAGE_PRESETS[0].prompt)
-          }
-        }
       })
       .catch((err) => {
         setErrorMessage('读取图片失败: ' + err.message)
@@ -359,6 +361,71 @@ export default function App() {
     }
   }
 
+  // 分页获取历史记录
+  const fetchHistory = useCallback(async (page: number = 1, pageSize: number = historyPageSize) => {
+    setHistoryLoading(true)
+    try {
+      const res = await fetchWithAuth(`/api/history?page=${page}&page_size=${pageSize}`)
+      if (res.ok) {
+        const data: HistoryResponse = await res.json()
+        setHistory(data.history || [])
+        setHistoryTotal(data.total ?? 0)
+        setHistoryPage(data.page ?? page)
+        setHistoryTotalPages(data.total_pages ?? 1)
+        if (data.history && data.history.length > 0) {
+          setCurrentResult((prev) => prev || data.history[0])
+        }
+      }
+    } catch (e) {
+      console.warn('获取历史记录异常:', e)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [historyPageSize])
+
+  const fetchHistoryRef = useRef(fetchHistory)
+  useEffect(() => {
+    fetchHistoryRef.current = fetchHistory
+  }, [fetchHistory])
+
+  const historyPageRef = useRef(historyPage)
+  useEffect(() => {
+    historyPageRef.current = historyPage
+  }, [historyPage])
+
+  const historyPageSizeRef = useRef(historyPageSize)
+  useEffect(() => {
+    historyPageSizeRef.current = historyPageSize
+  }, [historyPageSize])
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > historyTotalPages || newPage === historyPage || historyLoading) return
+    fetchHistory(newPage, historyPageSize)
+    const elem = document.querySelector('.history-section')
+    if (elem) {
+      elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }
+
+  const handlePageSizeChange = (newSize: number) => {
+    if (newSize === historyPageSize || historyLoading) return
+    setHistoryPageSize(newSize)
+    fetchHistory(1, newSize)
+  }
+
+  const getPageNumbers = (current: number, total: number): (number | string)[] => {
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1)
+    }
+    if (current <= 4) {
+      return [1, 2, 3, 4, 5, '...', total]
+    }
+    if (current >= total - 3) {
+      return [1, '...', total - 4, total - 3, total - 2, total - 1, total]
+    }
+    return [1, '...', current - 1, current, current + 1, '...', total]
+  }
+
   // 删除单条生成历史记录
   const handleDeleteHistory = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
@@ -369,16 +436,16 @@ export default function App() {
     try {
       const res = await fetchWithAuth(`/api/history/${id}`, { method: 'DELETE' })
       if (res.ok) {
-        setHistory((prev) => {
-          const updated = prev.filter((item) => item.id !== id)
-          if (currentResult?.id === id) {
-            setCurrentResult(updated.length > 0 ? updated[0] : null)
-          }
-          return updated
-        })
+        if (currentResult?.id === id) {
+          setCurrentResult(null)
+        }
         if (activeModalImage?.id === id) {
           setActiveModalImage(null)
         }
+        const curPage = historyPageRef.current
+        const curSize = historyPageSizeRef.current
+        const targetPage = history.length === 1 && curPage > 1 ? curPage - 1 : curPage
+        fetchHistory(targetPage, curSize)
       } else {
         const err = await res.json()
         setErrorMessage(err.detail || '删除记录失败')
@@ -417,7 +484,6 @@ export default function App() {
           setProgress(data.current_task)
         }
         if (data.history && data.history.length > 0) {
-          setHistory(data.history)
           if (!currentResult) {
             setCurrentResult(data.history[0])
           }
@@ -450,7 +516,6 @@ export default function App() {
           setIsBusy(false)
         }
         if (data.history && data.history.length > 0) {
-          setHistory(data.history)
           setCurrentResult((prev) => prev || data.history[0])
         }
       } catch (err) {
@@ -484,7 +549,13 @@ export default function App() {
       try {
         const data: ImageResult = JSON.parse(e.data)
         setCurrentResult(data)
-        setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)])
+        const curPage = historyPageRef.current
+        const curSize = historyPageSizeRef.current
+        if (curPage === 1) {
+          setHistory((prev) => [data, ...prev.filter((item) => item.id !== data.id)].slice(0, curSize))
+        }
+        setHistoryTotal((prev) => prev + 1)
+        setHistoryTotalPages((prev) => Math.ceil((prev + 1) / curSize) || 1)
         batchCallbacksRef.current.onComplete?.(data)
 
         // 若批次未结束，保持 isBusy 为 true，等待后续图片
@@ -492,6 +563,7 @@ export default function App() {
           setIsBusy(false)
           setIsCancelling(false)
           setProgress(null)
+          fetchHistoryRef.current(curPage, curSize)
         }
       } catch (err) {
         console.error(err)
@@ -573,6 +645,7 @@ export default function App() {
         setShowAuthModal(false)
         setAuthError(null)
         fetchStatus()
+        fetchHistoryRef.current(1)
         connectSSE(tokenToTest.trim())
       } else {
         const err = await res.json().catch(() => ({}))
@@ -619,10 +692,12 @@ export default function App() {
           if (!data.auth_required) {
             setIsAuthenticated(true)
             fetchStatus()
+            fetchHistoryRef.current(1)
             connectSSE()
           } else if (data.authenticated) {
             setIsAuthenticated(true)
             fetchStatus()
+            fetchHistoryRef.current(1)
             connectSSE(savedToken)
           } else if (savedToken) {
             handleVerifyToken(savedToken)
@@ -632,11 +707,13 @@ export default function App() {
           }
         } else {
           fetchStatus()
+          fetchHistoryRef.current(1)
           connectSSE()
         }
       } catch (err) {
         console.warn('获取鉴权状态失败:', err)
         fetchStatus()
+        fetchHistoryRef.current(1)
         connectSSE()
       }
     }
@@ -713,6 +790,92 @@ export default function App() {
       setIsBusy(false)
       setProgress(null)
     }
+  }
+
+  const renderPagination = () => {
+    if (historyTotal <= 0) return null
+
+    return (
+      <div className="pagination-bar">
+        <div className="pagination-summary">
+          共 <span className="pagination-highlight">{historyTotal}</span> 条记录，第 {historyPage} / {historyTotalPages} 页
+        </div>
+        <div className="pagination-actions">
+          <button
+            type="button"
+            className="pagination-btn icon-btn"
+            onClick={() => handlePageChange(1)}
+            disabled={historyPage <= 1 || historyLoading}
+            title="第一页"
+          >
+            <ChevronsLeft size={16} />
+          </button>
+          <button
+            type="button"
+            className="pagination-btn icon-btn"
+            onClick={() => handlePageChange(historyPage - 1)}
+            disabled={historyPage <= 1 || historyLoading}
+            title="上一页"
+          >
+            <ChevronLeft size={16} />
+          </button>
+
+          <div className="pagination-numbers">
+            {getPageNumbers(historyPage, historyTotalPages).map((p, idx) =>
+              p === '...' ? (
+                <span key={`ellipsis-${idx}`} className="pagination-ellipsis">
+                  …
+                </span>
+              ) : (
+                <button
+                  key={p}
+                  type="button"
+                  className={`pagination-btn num-btn ${historyPage === p ? 'active' : ''}`}
+                  onClick={() => handlePageChange(Number(p))}
+                  disabled={historyLoading}
+                >
+                  {p}
+                </button>
+              )
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="pagination-btn icon-btn"
+            onClick={() => handlePageChange(historyPage + 1)}
+            disabled={historyPage >= historyTotalPages || historyLoading}
+            title="下一页"
+          >
+            <ChevronRight size={16} />
+          </button>
+          <button
+            type="button"
+            className="pagination-btn icon-btn"
+            onClick={() => handlePageChange(historyTotalPages)}
+            disabled={historyPage >= historyTotalPages || historyLoading}
+            title="最后一页"
+          >
+            <ChevronsRight size={16} />
+          </button>
+        </div>
+
+        <div className="pagination-size-select">
+          <span style={{ fontSize: '12px', color: 'var(--md-sys-color-outline)' }}>每页</span>
+          <select
+            className="pagination-select"
+            value={historyPageSize}
+            onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+            disabled={historyLoading}
+          >
+            <option value={12}>12 条</option>
+            <option value={24}>24 条</option>
+            <option value={48}>48 条</option>
+            <option value={96}>96 条</option>
+          </select>
+        </div>
+      </div>
+    )
   }
 
   const availableResolutions = inputImages.length > 0
@@ -1450,13 +1613,16 @@ export default function App() {
         </div>
 
         {/* Desktop History Gallery */}
-        {!isMobile && history.length > 0 && (
+        {!isMobile && (historyTotal > 0 || history.length > 0) && (
           <section className="history-section">
-            <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Clock size={18} color="var(--md-sys-color-primary)" />
-              历史生成记录 ({history.length})
-            </h3>
-            <div className="history-grid">
+            <div className="history-header">
+              <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                <Clock size={18} color="var(--md-sys-color-primary)" />
+                历史生成记录 ({historyTotal})
+              </h3>
+              {historyLoading && <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />}
+            </div>
+            <div className={`history-grid ${historyLoading ? 'loading' : ''}`}>
               {history.map((item) => (
                 <div
                   key={item.id}
@@ -1496,6 +1662,7 @@ export default function App() {
                 </div>
               ))}
             </div>
+            {renderPagination()}
           </section>
         )}
         </div>
@@ -1503,13 +1670,16 @@ export default function App() {
         {/* Mobile Gallery Tab View */}
         {isMobile && mobileTab === 'gallery' && (
           <div style={{ width: '100%' }}>
-            {history.length > 0 ? (
+            {(historyTotal > 0 || history.length > 0) ? (
               <section className="history-section" style={{ marginTop: 0 }}>
-                <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Clock size={18} color="var(--md-sys-color-primary)" />
-                  历史画廊 ({history.length})
-                </h3>
-                <div className="history-grid">
+                <div className="history-header">
+                  <h3 style={{ fontSize: '18px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                    <Clock size={18} color="var(--md-sys-color-primary)" />
+                    历史画廊 ({historyTotal})
+                  </h3>
+                  {historyLoading && <div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />}
+                </div>
+                <div className={`history-grid ${historyLoading ? 'loading' : ''}`}>
                   {history.map((item) => (
                     <div
                       key={item.id}
@@ -1549,6 +1719,7 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                {renderPagination()}
               </section>
             ) : (
               <div className="empty-placeholder" style={{ padding: '60px 20px', textAlign: 'center' }}>
@@ -1578,7 +1749,13 @@ export default function App() {
             registerBatchCallbacks={registerBatchCallbacks}
             onTaskComplete={(result) => {
               setCurrentResult(result)
-              setHistory((prev) => [result, ...prev.filter((item) => item.id !== result.id)])
+              const curPage = historyPageRef.current
+              const curSize = historyPageSizeRef.current
+              if (curPage === 1) {
+                setHistory((prev) => [result, ...prev.filter((item) => item.id !== result.id)].slice(0, curSize))
+              }
+              setHistoryTotal((prev) => prev + 1)
+              setHistoryTotalPages((prev) => Math.ceil((prev + 1) / curSize) || 1)
             }}
             onRemixToStudio={handleRemixFromBatch}
             setErrorMessage={setErrorMessage}
@@ -1607,13 +1784,18 @@ export default function App() {
           <button
             type="button"
             className={`mobile-nav-item ${mobileTab === 'gallery' ? 'active' : ''}`}
-            onClick={() => setMobileTab('gallery')}
+            onClick={() => {
+              setMobileTab('gallery')
+              if (history.length === 0 && historyTotal > 0) {
+                fetchHistoryRef.current(1, historyPageSizeRef.current)
+              }
+            }}
           >
             <div className="mobile-nav-icon-wrapper">
               <Clock size={20} />
-              {history.length > 0 && (
+              {historyTotal > 0 && (
                 <span className="mobile-nav-count-badge">
-                  {history.length > 99 ? '99+' : history.length}
+                  {historyTotal > 99 ? '99+' : historyTotal}
                 </span>
               )}
             </div>

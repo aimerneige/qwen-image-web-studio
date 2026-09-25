@@ -96,7 +96,7 @@ export default function BatchProcessing({
   onQueueStatsChange,
 }: BatchProcessingProps) {
   // Batch Prompt & Inference Parameters
-  const [prompt, setPrompt] = useState(BATCH_PRESETS[0].prompt)
+  const [prompt, setPrompt] = useState('')
   const [negativePrompt, setNegativePrompt] = useState('')
   const [resolution, setResolution] = useState<Resolution>(BATCH_RESOLUTIONS[0])
   const [steps, setSteps] = useState(28)

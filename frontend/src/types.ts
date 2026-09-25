@@ -57,3 +57,11 @@ export interface BatchItem {
   error?: string
   result?: ImageResult
 }
+
+export interface HistoryResponse {
+  history: ImageResult[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
